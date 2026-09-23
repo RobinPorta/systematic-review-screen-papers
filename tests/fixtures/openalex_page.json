@@ -1,0 +1,353 @@
+{
+ "meta": {
+  "count": 3,
+  "page": 1,
+  "per_page": 3,
+  "next_cursor": "IlsxNzA5MjUyODAwMDAwXSI="
+ },
+ "results": [
+  {
+   "id": "https://openalex.org/W2100000001",
+   "doi": "https://doi.org/10.1016/j.jas.2021.100001",
+   "ids": {
+    "openalex": "https://openalex.org/W2100000001",
+    "doi": "https://doi.org/10.1016/j.jas.2021.100001",
+    "pmid": "https://pubmed.ncbi.nlm.nih.gov/34000001",
+    "pmcid": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8000001"
+   },
+   "display_name": "Weekly board-game sessions and loneliness in community-dwelling older adults: a randomised controlled trial",
+   "publication_year": 2021,
+   "publication_date": "2021-06-01",
+   "language": "en",
+   "type": "article",
+   "abstract_inverted_index": {
+    "Background:": [
+     0
+    ],
+    "Loneliness": [
+     1,
+     40,
+     46
+    ],
+    "is": [
+     2
+    ],
+    "common": [
+     3
+    ],
+    "among": [
+     4
+    ],
+    "older": [
+     5
+    ],
+    "adults.": [
+     6
+    ],
+    "We": [
+     7
+    ],
+    "tested": [
+     8
+    ],
+    "whether": [
+     9
+    ],
+    "a": [
+     10,
+     26,
+     31
+    ],
+    "weekly": [
+     11
+    ],
+    "facilitated": [
+     12
+    ],
+    "board-game": [
+     13,
+     28
+    ],
+    "group": [
+     14,
+     29
+    ],
+    "reduces": [
+     15
+    ],
+    "loneliness.": [
+     16
+    ],
+    "Methods:": [
+     17
+    ],
+    "120": [
+     18
+    ],
+    "community-dwelling": [
+     19
+    ],
+    "adults": [
+     20
+    ],
+    "aged": [
+     21
+    ],
+    "65-89": [
+     22
+    ],
+    "were": [
+     23
+    ],
+    "randomised": [
+     24
+    ],
+    "to": [
+     25
+    ],
+    "twelve-week": [
+     27
+    ],
+    "or": [
+     30
+    ],
+    "waitlist": [
+     32
+    ],
+    "control.": [
+     33
+    ],
+    "The": [
+     34
+    ],
+    "primary": [
+     35
+    ],
+    "outcome": [
+     36
+    ],
+    "was": [
+     37
+    ],
+    "the": [
+     38,
+     51
+    ],
+    "UCLA": [
+     39
+    ],
+    "Scale": [
+     41
+    ],
+    "at": [
+     42
+    ],
+    "twelve": [
+     43
+    ],
+    "weeks.": [
+     44
+    ],
+    "Results:": [
+     45
+    ],
+    "scores": [
+     47
+    ],
+    "fell": [
+     48
+    ],
+    "significantly": [
+     49
+    ],
+    "in": [
+     50
+    ],
+    "intervention": [
+     52
+    ],
+    "arm.": [
+     53
+    ]
+   },
+   "primary_location": {
+    "source": {
+     "display_name": "Journal of Ageing and Society"
+    },
+    "landing_page_url": "https://example.org/jas/100001"
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "Marco Rossi"
+     }
+    }
+   ],
+   "keywords": [
+    {
+     "display_name": "board games"
+    },
+    {
+     "display_name": "loneliness"
+    },
+    {
+     "display_name": "older adults"
+    }
+   ],
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "gold"
+   }
+  },
+  {
+   "id": "https://openalex.org/W2100000002",
+   "doi": "https://doi.org/10.1016/j.jeb.2018.000022",
+   "ids": {
+    "openalex": "https://openalex.org/W2100000002",
+    "doi": "https://doi.org/10.1016/j.jeb.2018.000022"
+   },
+   "display_name": "Cooperation in a repeated Prisoner's Dilemma: evidence from a laboratory study",
+   "publication_year": 2018,
+   "publication_date": "2018-03-15",
+   "language": "en",
+   "type": "article",
+   "abstract_inverted_index": {
+    "We": [
+     0
+    ],
+    "study": [
+     1
+    ],
+    "cooperation": [
+     2
+    ],
+    "using": [
+     3
+    ],
+    "a": [
+     4,
+     31
+    ],
+    "repeated": [
+     5
+    ],
+    "Prisoner's": [
+     6
+    ],
+    "Dilemma": [
+     7
+    ],
+    "game": [
+     8,
+     14
+    ],
+    "played": [
+     9
+    ],
+    "by": [
+     10
+    ],
+    "90": [
+     11
+    ],
+    "undergraduates.": [
+     12
+    ],
+    "The": [
+     13
+    ],
+    "serves": [
+     15
+    ],
+    "as": [
+     16
+    ],
+    "an": [
+     17
+    ],
+    "incentivised": [
+     18
+    ],
+    "measure": [
+     19
+    ],
+    "of": [
+     20
+    ],
+    "cooperative": [
+     21
+    ],
+    "preference.": [
+     22
+    ],
+    "Payoffs": [
+     23
+    ],
+    "were": [
+     24
+    ],
+    "monetary": [
+     25
+    ],
+    "and": [
+     26
+    ],
+    "behaviour": [
+     27
+    ],
+    "was": [
+     28
+    ],
+    "analysed": [
+     29
+    ],
+    "with": [
+     30
+    ],
+    "random-effects": [
+     32
+    ],
+    "model.": [
+     33
+    ]
+   },
+   "primary_location": {
+    "source": {
+     "display_name": "Journal of Economic Behaviour"
+    }
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "Petra Novak"
+     }
+    }
+   ],
+   "keywords": [
+    {
+     "display_name": "cooperation"
+    }
+   ],
+   "open_access": {
+    "is_oa": false
+   }
+  },
+  {
+   "id": "https://openalex.org/W2100000003",
+   "doi": null,
+   "ids": {
+    "openalex": "https://openalex.org/W2100000003"
+   },
+   "display_name": "A mobile application adaptation of a classic strategy board game",
+   "publication_year": 1988,
+   "publication_date": "1988-11-01",
+   "language": "de",
+   "type": "preprint",
+   "abstract_inverted_index": null,
+   "primary_location": null,
+   "authorships": [],
+   "keywords": [],
+   "open_access": null
+  }
+ ]
+}

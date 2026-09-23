@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Run artefacts: fetched records, cached API responses, screening output, gold labels.
+data/
+!data/.gitkeep

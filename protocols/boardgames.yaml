@@ -1,0 +1,253 @@
+name: Board games across the lifespan
+description: Empirical studies in which people of any age play a physical board, tabletop or card game,
+  and the study reports an outcome, effect or experience of taking part.
+query: "(\"board game\" OR \"board games\" OR boardgame OR \"tabletop game\" OR \"tabletop games\"\n OR\
+  \ \"table-top game\" OR \"card game\" OR \"card games\" OR \"dice game\"\n OR \"tabletop role-playing\"\
+  \ OR mahjong OR chess OR draughts OR checkers\n OR backgammon OR dominoes)\nAND (play OR playing OR\
+  \ intervention OR programme OR program OR training\n     OR activity OR workshop)\nAND (cognitive OR\
+  \ cognition OR memory OR \"executive function\" OR attention OR social\n     OR loneliness OR wellbeing\
+  \ OR \"well-being\" OR education OR educational OR learning\n     OR motivation OR engagement OR therapy\
+  \ OR therapeutic OR rehabilitation\n     OR benefit OR benefits OR outcome OR outcomes OR effect OR\
+  \ effects)"
+filters:
+  year_from: 1990
+  languages:
+  - en
+  - it
+  types:
+  - article
+  - review
+  require_abstract: false
+thresholds:
+  include_min: 0.3
+  exclude_min: 0.95
+  informative_min: 0.4
+  reason_confidence_min: 0.3
+criteria:
+- id: abstract_informative
+  kind: guard
+  label: Abstract says enough to judge
+  instructions: The record describes what was actually done and with whom, in enough detail to judge whether
+    it meets eligibility criteria.
+  outcomes:
+    'true': States what participants did, who they were, or what was measured.
+    'false': Only a title, a bare topic statement, a conference listing, or an abstract so vague that
+      eligibility cannot be judged from it.
+  sections:
+  - title
+  - abstract
+  - methods
+- id: inc_human_participants
+  kind: inclusion
+  label: Human participants
+  instructions: The study collected data from human participants.
+  outcomes:
+    'true': Data were gathered from people — measurements, observations, interviews or surveys.
+    'false': 'No human participants: a simulation, a purely computational study, an analysis of game rules
+      or texts, or a study of animals.'
+  sections:
+  - title
+  - abstract
+  - methods
+  - participants
+- id: inc_plays_physical_game
+  kind: inclusion
+  label: Participants played a physical game
+  instructions: Participants played a physical, non-digital board game, tabletop game, card game or dice
+    game — one with real components, played face to face.
+  outcomes:
+    'true':
+      what: 'Participants sat down and played a game made of physical components: a board game, a card
+        game, dominoes, chess, mahjong, a tabletop role-playing game, or a game purpose-built for the
+        study out of physical materials.'
+      examples:
+      - Residents played dominoes twice a week for twelve weeks.
+      - Pupils learned fractions through a purpose-made card game.
+      - Participants were taught and then played a modern strategy board game.
+    'false':
+      what: 'No physical game was played by participants: the game is digital, or it is only described,
+        designed or discussed rather than played.'
+      examples:
+      - A tablet app version of a classic board game.
+      - A paper analysing the design of board games without anyone playing one.
+      - A survey about attitudes to games, with no play involved.
+  sections:
+  - methods
+  - intervention
+  - measures
+- id: inc_measures_outcome
+  kind: inclusion
+  label: An outcome of playing was reported
+  instructions: The study reports at least one outcome, effect or experience connected to playing the
+    game — measured quantitatively or described qualitatively.
+  outcomes:
+    'true': 'Reports what playing did or how it was experienced: test scores, observed behaviour, self-reported
+      wellbeing, learning gains, interview accounts of taking part.'
+    'false': Reports nothing about the effects or experience of playing — only that a game exists, was
+      designed, or is used somewhere.
+  sections:
+  - methods
+  - measures
+  - results
+- id: inc_empirical
+  kind: inclusion
+  label: Empirical report
+  instructions: The report presents its own empirical findings — quantitative, qualitative or mixed.
+  outcomes:
+    'true': Collected and analysed its own data, of any kind.
+    'false': An editorial, commentary, opinion piece, news item, book review, or a purely theoretical
+      or conceptual paper presenting no data of its own.
+  sections:
+  - title
+  - abstract
+  - methods
+  - participants
+- id: exc_digital_only
+  kind: exclusion
+  label: Digital games only
+  instructions: Every game involved is digital — a video game, computer game, console game, mobile app,
+    virtual-reality game, or an on-screen adaptation of a physical board game.
+  outcomes:
+    'true': All play happened on a screen. A digital version of chess or a board game played in an app
+      counts as digital.
+    'false': At least one game was played with physical components, even if digital games were also studied
+      alongside it.
+  sections:
+  - methods
+  - intervention
+  - measures
+- id: exc_game_as_instrument
+  kind: exclusion
+  label: Game used only as a measurement instrument
+  instructions: The game is used only as a task or instrument for measuring something about the participants,
+    rather than being studied as an activity they take part in.
+  outcomes:
+    'true':
+      what: The game exists in the study to elicit a measurement. The research question is about what
+        players' behaviour reveals, not about what playing does for them.
+      examples:
+      - A Prisoner's Dilemma or Public Goods game used to measure cooperation.
+      - An Ultimatum Game used to study fairness preferences.
+      - A board-style neuropsychological task such as Tower of London used as a test.
+      - A gambling-style card task used to measure risk taking.
+    'false':
+      what: Participants played the game as a pastime, class activity, therapy, or organised intervention,
+        and the study asks what taking part did for them.
+      examples:
+      - A weekly board-game club run to reduce loneliness in older adults.
+      - A card game used to teach vocabulary, with learning measured afterwards.
+      - Interviews with families about what regular game nights mean to them.
+  sections:
+  - methods
+  - intervention
+  - measures
+- id: exc_gambling
+  kind: exclusion
+  label: Gambling context
+  instructions: 'The study is about gambling: participants wagered money or played in a casino, betting
+    or problem-gambling context.'
+  sections:
+  - methods
+  - intervention
+  - measures
+- id: exc_no_human_play
+  kind: exclusion
+  label: No human play (design, AI or modelling)
+  instructions: The paper is about designing games, about computers playing games, or about game-theoretic
+    modelling, with no human participants playing a game.
+  outcomes:
+    'true': Game design or development with no play study; an algorithm or AI agent playing the game;
+      a mathematical or game-theoretic analysis.
+    'false': Human participants actually played.
+  sections:
+  - title
+  - abstract
+  - methods
+  - participants
+choices:
+- id: study_design
+  instructions: What design does this study use?
+  options:
+    rct: Randomised controlled trial
+    quasi_experimental: Controlled or pre-post study without randomisation
+    cohort: Prospective or retrospective follow-up of a group over time
+    cross_sectional: Measured at a single time point, no intervention
+    qualitative: Interviews, focus groups, ethnography or observation as the main method
+    mixed_methods: Substantial quantitative and qualitative components together
+    case_report: A single case or a small unmatched series
+    systematic_review: A review, scoping review or meta-analysis of other studies
+    protocol: A study protocol or trial registration, with no results yet
+    non_empirical: Editorial, commentary, opinion or theoretical paper
+    other: A design none of the above describes
+  sections:
+  - title
+  - abstract
+  - methods
+  - participants
+- id: age_group
+  instructions: Which age group did the participants belong to?
+  options:
+    children: Roughly up to 12 years old
+    adolescents: Roughly 13 to 17 years old
+    young_adults: Roughly 18 to 39 years old
+    middle_aged: Roughly 40 to 64 years old
+    older_adults: Roughly 65 and over
+    mixed_ages: Spanning several of these groups, or explicitly all ages
+    not_stated: The record does not say how old the participants were
+  sections:
+  - title
+  - abstract
+  - methods
+  - participants
+- id: game_type
+  instructions: What kind of game did participants play?
+  options:
+    modern_board_game: A contemporary hobby or designer board game
+    traditional_board_game: A long-established game such as chess, draughts, mahjong or backgammon
+    card_game: A card or dice game
+    purpose_built: A game made or adapted by the researchers for this study
+    role_playing: A tabletop role-playing game
+    digital: A digital or on-screen game
+    not_a_game: No game was played
+    other: A game none of the above describes
+  sections:
+  - methods
+  - intervention
+  - measures
+- id: outcome_domain
+  instructions: Which domain does the study's main reported outcome belong to?
+  options:
+    cognitive: Memory, attention, executive function, reasoning, cognitive decline
+    social: Connection, loneliness, cooperation, communication, group belonging
+    educational: Learning, knowledge, academic attainment, motivation to learn
+    psychological: Mood, wellbeing, anxiety, depression, self-esteem, quality of life
+    physical: Motor skills, dexterity, physical activity, rehabilitation
+    behavioural: Behaviour change, adherence, risk behaviour, health choices
+    none: No outcome of playing is reported
+    other: An outcome domain none of the above describes
+  sections:
+  - methods
+  - measures
+  - results
+scores:
+- id: topical_fit
+  instructions: How central is playing a physical game to what this study is actually about?
+  levels:
+  - what: Games are incidental or absent — mentioned in passing, or only as a metaphor.
+    examples:
+    - A paper on 'the game of politics'
+    - Games listed among many ward activities
+  - what: Games appear but are not the focus — one component among several, or background.
+    examples:
+    - A multi-activity programme in which board games were one session
+  - what: Playing a game is a substantial part of the study, alongside other concerns.
+    examples:
+    - A comparison of a game-based and a lecture-based teaching unit
+  - what: Playing a physical game is what the study is about.
+    examples:
+    - A trial of a weekly board-game group
+    - An interview study of game-night regulars
+  sections:
+  - title
+  - abstract
+  - methods

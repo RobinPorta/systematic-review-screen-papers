@@ -1,0 +1,90 @@
+# A blank starting point for a new review. Replace every TODO, then tune on real data.
+# See protocols/boardgames.yaml for a worked, fully-tuned example.
+name: New review
+description: TODO — one or two sentences on which studies this review is looking for.
+query: '"TODO topic phrase" AND (outcome OR effect OR intervention)'
+filters:
+  year_from: 2000
+  languages:
+  - en
+  types:
+  - article
+  - review
+  require_abstract: false
+thresholds:
+  include_min: 0.6
+  exclude_min: 0.85
+  informative_min: 0.4
+  reason_confidence_min: 0.3
+criteria:
+- id: abstract_informative
+  kind: guard
+  label: Abstract says enough to judge
+  instructions: The record describes what was actually done and with whom, in enough detail to judge whether
+    it meets eligibility criteria.
+  outcomes:
+    'true': States what participants did, who they were, or what was measured.
+    'false': Only a title, a bare topic statement, a conference listing, or an abstract so vague that
+      eligibility cannot be judged from it.
+  sections:
+  - title
+  - abstract
+  - methods
+- id: inc_empirical
+  kind: inclusion
+  label: Empirical report
+  instructions: The report presents its own empirical findings — quantitative, qualitative or mixed.
+  outcomes:
+    'true': Collected and analysed its own data, of any kind.
+    'false': An editorial, commentary, opinion piece, news item, book review, or a purely theoretical
+      or conceptual paper presenting no data of its own.
+  sections:
+  - title
+  - abstract
+  - methods
+- id: inc_topic
+  kind: inclusion
+  label: TODO — the core topic is studied
+  instructions: TODO — state the exact condition a study must meet, in one judgement.
+  outcomes:
+    'true': TODO — what a study that meets this looks like.
+    'false': TODO — what a study that fails it looks like, especially the near misses.
+  sections:
+  - methods
+  - intervention
+  - measures
+- id: exc_example
+  kind: exclusion
+  label: TODO — a reason to exclude
+  instructions: TODO — a condition that, when clearly true, rules a study out.
+  sections:
+  - methods
+choices:
+- id: study_design
+  instructions: What design does this study use?
+  options:
+    rct: Randomised controlled trial
+    quasi_experimental: Controlled or pre-post study without randomisation
+    cohort: Prospective or retrospective follow-up of a group over time
+    cross_sectional: Measured at a single time point, no intervention
+    qualitative: Interviews, focus groups, ethnography or observation as the main method
+    mixed_methods: Substantial quantitative and qualitative components together
+    systematic_review: A review, scoping review or meta-analysis of other studies
+    non_empirical: Editorial, commentary, opinion or theoretical paper
+    other: A design none of the above describes
+  sections:
+  - title
+  - abstract
+  - methods
+scores:
+- id: topical_fit
+  instructions: TODO — How central is <your topic> to what this study is actually about?
+  levels:
+  - The topic is incidental or absent — mentioned in passing only.
+  - The topic appears but is not the focus.
+  - The topic is a substantial part of the study, alongside other concerns.
+  - The topic is what the study is about.
+  sections:
+  - title
+  - abstract
+  - methods

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<article xmlns:xlink="http://www.w3.org/1999/xlink" article-type="research-article" xml:lang="en">
+  <front>
+    <journal-meta>
+      <journal-title-group>
+        <journal-title>Journal of Ageing and Society</journal-title>
+      </journal-title-group>
+    </journal-meta>
+    <article-meta>
+      <article-id pub-id-type="pmcid">PMC8000001</article-id>
+      <article-id pub-id-type="doi">10.1016/j.jas.2021.100001</article-id>
+      <title-group>
+        <article-title>Weekly board-game sessions and loneliness in community-dwelling older adults</article-title>
+      </title-group>
+      <abstract>
+        <p>A randomised controlled trial of a twelve-week facilitated board-game group for
+        older adults, with loneliness as the primary outcome.</p>
+      </abstract>
+    </article-meta>
+  </front>
+  <body>
+    <sec id="sec1">
+      <title>1. Introduction</title>
+      <p>Loneliness affects a substantial minority of older adults and is associated with
+      poorer health outcomes<xref ref-type="bibr" rid="bib1">[1]</xref>. Group activities
+      have been proposed as a remedy.</p>
+    </sec>
+    <sec id="sec2">
+      <title>2. Methods</title>
+      <p>This was a two-arm parallel randomised controlled trial.</p>
+      <sec id="sec2.1">
+        <title>2.1. Participants</title>
+        <p>We recruited 120 community-dwelling adults aged 65 to 89 from four municipal
+        community centres. Exclusion criteria were diagnosed dementia and severe visual
+        impairment.</p>
+      </sec>
+      <sec id="sec2.2">
+        <title>2.2. Intervention</title>
+        <p>Participants in the intervention arm attended a weekly ninety-minute facilitated
+        session in which they played physical board games including Rummikub, dominoes and a
+        modern cooperative tile-laying game. No digital games were used.</p>
+      </sec>
+      <sec id="sec2.3">
+        <title>2.3. Outcome measures</title>
+        <p>The primary outcome was the UCLA Loneliness Scale, version 3, administered at
+        baseline and at twelve weeks. Secondary outcomes were the WHO-5 Wellbeing Index and
+        the Montreal Cognitive Assessment.</p>
+      </sec>
+      <sec id="sec2.4">
+        <title>2.4. Statistical analysis</title>
+        <p>We fitted a linear mixed model with arm, time and their interaction as fixed
+        effects and participant as a random intercept.</p>
+      </sec>
+    </sec>
+    <sec id="sec3">
+      <title>3. Results</title>
+      <p>Loneliness scores fell by 4.2 points in the intervention arm and by 0.6 points in
+      the control arm, a between-group difference of 3.6 points (95% CI 2.1 to 5.1,
+      p &lt; 0.001).</p>
+    </sec>
+    <sec id="sec4">
+      <title>4. Discussion</title>
+      <p>Regular face-to-face board-game play reduced self-reported loneliness in this
+      sample.</p>
+      <sec id="sec4.1">
+        <title>4.1. Limitations</title>
+        <p>Participants could not be blinded to allocation, and the follow-up period was
+        short.</p>
+      </sec>
+    </sec>
+    <sec id="sec5">
+      <title>Ringraziamenti</title>
+      <p>We thank the staff of the participating community centres.</p>
+    </sec>
+  </body>
+</article>

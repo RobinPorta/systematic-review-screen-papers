@@ -1,10 +1,11 @@
-"""Session state: everything the UI shows lives in this browser session's memory.
+"""Session state: everything the UI shows lives in server memory, never on disk.
 
 Protocols (the bundled examples included), fetched records, screening results and labels
-are all held in `st.session_state`. Once something is fetched or computed, nothing on disk
-is consulted for it again, so deleting files on the server never touches a session's work.
-Each browser session is private by construction, and reloading the page starts afresh:
-download what you want to keep.
+are held in the in-memory `store`, keyed by the random `ws` code in the page URL. Reloading
+the page, or reopening the link, finds them again. Once something is fetched or computed,
+nothing on disk is consulted for it again, so deleting files on the server never touches a
+session's work. A server restart, an hour of inactivity, or being the longest-idle of too
+many sessions clears it: download what you want to keep.
 
 The only files the app touches are the shared caches of public OpenAlex and Europe PMC
 data, which are rebuilt on demand if they disappear.
@@ -17,6 +18,8 @@ from __future__ import annotations
 
 import io
 import os
+import re
+import secrets
 from dataclasses import dataclass, field, replace
 
 import pandas as pd
@@ -28,6 +31,7 @@ from ..protocol import Protocol
 from ..records import Record, read_jsonl, write_jsonl
 from ..screen import ScreenRun
 from ..screen_fulltext import FullTextRun
+from .store import SessionStore
 
 #: Session-state keys of the credential inputs in the sidebar. They live only in this
 #: browser session and are never written to disk, so each visitor brings their own key.
@@ -40,6 +44,62 @@ STAGES = ("abstracts", "fulltext")
 
 def single_user() -> bool:
     return os.environ.get("SCREENER_SINGLE_USER", "").strip().lower() in {"1", "true", "yes"}
+
+
+# ------------------------------------------------------------------ the session
+
+
+WORKSPACE_PARAM = "ws"
+#: What `secrets.token_urlsafe(18)` produces. Anything else in the URL is ignored.
+_TOKEN = re.compile(r"^[A-Za-z0-9_-]{24}$")
+
+
+@st.cache_resource
+def _store() -> SessionStore:
+    """One store for the whole server process, shared by every browser connection."""
+    return SessionStore()
+
+
+def _token() -> str:
+    token = st.session_state.get("ws_token")
+    if token is None:
+        from_url = st.query_params.get(WORKSPACE_PARAM, "")
+        # Remember whether the code came from a link: if so, a missing session means it
+        # was cleared, which is worth telling the visitor.
+        st.session_state["ws_seen"] = bool(_TOKEN.match(from_url))
+        token = from_url if _TOKEN.match(from_url) else secrets.token_urlsafe(18)
+        st.session_state["ws_token"] = token
+    if st.query_params.get(WORKSPACE_PARAM) != token:
+        st.query_params[WORKSPACE_PARAM] = token
+    return token
+
+
+def _data() -> dict:
+    """This session's data. Recreated empty, with a notice, if it expired or was dropped."""
+    token = _token()
+    data = _store().get(token)
+    if data is None:
+        if st.session_state.get("ws_seen"):
+            st.session_state["notice"] = (
+                "Your earlier session was cleared — an hour of inactivity, a server restart, "
+                "or too many sessions at once — so this one starts fresh."
+            )
+        data = _store().create(token)
+    st.session_state["ws_seen"] = True
+    return data
+
+
+def notice() -> str | None:
+    """A one-off message about the session, shown once and then forgotten."""
+    return st.session_state.pop("notice", None)
+
+
+def new_session() -> None:
+    """Start over with an empty session. The old one is dropped from memory."""
+    _store().discard(_token())
+    for key in ("ws_token", "ws_seen", "draft"):
+        st.session_state.pop(key, None)
+    st.query_params.pop(WORKSPACE_PARAM, None)
 
 
 def _typed(key: str) -> str | None:
@@ -84,14 +144,15 @@ class Entry:
 
 
 def _library() -> dict[str, Entry]:
-    if "library" not in st.session_state:
+    data = _data()
+    if "library" not in data:
         entries = {pid: Entry(pid, spec, True) for pid, spec in library.bundled().items()}
         if single_user():
             for pid, spec in library.from_directory(paths.USER_PROTOCOLS_DIR).items():
                 entries.setdefault(pid, Entry(pid, spec, False))
-        st.session_state["library"] = entries
-        st.session_state["starter"] = library.starter()
-    return st.session_state["library"]
+        data["library"] = entries
+        data["starter"] = library.starter()
+    return data["library"]
 
 
 def entries() -> list[Entry]:
@@ -101,11 +162,11 @@ def entries() -> list[Entry]:
 
 def starter() -> Protocol:
     _library()
-    return st.session_state["starter"]
+    return _data()["starter"]
 
 
 def current_id() -> str:
-    pid = st.session_state.get("protocol_id", paths.DEFAULT_PROTOCOL.stem)
+    pid = _data().get("protocol_id", paths.DEFAULT_PROTOCOL.stem)
     return pid if pid in _library() else next(iter(_library()))
 
 
@@ -123,7 +184,7 @@ def is_editable() -> bool:
 
 
 def select_protocol(pid: str) -> None:
-    st.session_state["protocol_id"] = pid
+    _data()["protocol_id"] = pid
     st.session_state.pop("draft", None)
 
 
@@ -185,7 +246,7 @@ class Run:
 
 
 def _runs() -> dict[str, Run]:
-    return st.session_state.setdefault("runs", {})
+    return _data().setdefault("runs", {})
 
 
 def _files() -> paths.RunPaths:

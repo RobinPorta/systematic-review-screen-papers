@@ -129,21 +129,26 @@ results and labels, so two reviews never mix.
 
 ### Where your data lives
 
-Everything lives **in your browser session's memory**: your protocols, fetched records,
-screening results and labels, and the bundled example too.
+Everything lives **in server memory, never on disk**: your protocols, fetched records,
+screening results and labels, and the bundled example too. It is kept under the random `ws`
+code in the page URL.
 
-- **It is private.** Each session is separate, so visitors never see each other's work.
+- **Reloading keeps it.** So does reopening the link. Anyone with the link can open the
+  session, so share it only on purpose.
 - **Disk changes don't touch it.** Once something is fetched or computed, the session never
   reads it from disk again, so deleting files on the server leaves your work intact.
-- **It lasts as long as the session.** Reloading the page, or restarting the server, starts
-  afresh. To keep something, use the download buttons: protocol YAML, screening and
-  full-text results as CSV, and labels as CSV. A downloaded protocol can be imported again.
-- **Only public data touches the disk.** The app writes nothing to disk except the shared
-  caches of public OpenAlex and Europe PMC data, which are rebuilt if they disappear. Jev
-  answers are not cached, because they were bought with your key.
+- **It is temporary.** A session is dropped after **an hour without activity**. The server
+  keeps at most **20 sessions**, and when a 21st starts, the one idle the longest is
+  dropped. A server restart clears all of them.
+- **To keep something, download it**: protocol YAML, screening and full-text results as
+  CSV, and labels as CSV. A downloaded protocol can be imported again.
+- **Your API key is never kept.** Paste it again after a reload.
+- **Only public data touches the disk.** The app writes nothing except the shared caches of
+  public OpenAlex and Europe PMC data, which are rebuilt if they disappear. Jev answers are
+  not cached, because they were bought with your key.
 
-A session holding a large review uses a fair amount of server memory, roughly 190 MB for
-5,000 screened records. Fetch in batches of a few hundred to a couple of thousand records.
+A large review uses a fair amount of server memory: roughly 190 MB for 5,000 screened
+records. A search fetches at most 5,000 records.
 
 To use the UI on the same files as the CLI, run it in single-user mode. It loads from, and
 writes through to, `data/`:

@@ -45,11 +45,21 @@ def session_sidebar() -> None:
     if state.single_user():
         st.caption("Single-user mode: also reading and writing `data/`, shared with the CLI.")
         return
-    st.caption(
-        "🔒 Your protocols and results live only in this browser session, private to you. "
-        "Reloading the page or a server restart clears them, so download what you want "
-        "to keep."
-    )
+    message = state.notice()
+    if message:
+        st.warning(message)
+    with st.expander("🔒 Your session"):
+        st.caption(
+            "Your protocols and results are kept in server memory under the `ws` code in "
+            "the address bar, never on disk. Reloading the page keeps them, and so does "
+            "reopening the link — but only for an hour after your last action, and while the "
+            "server is not restarted. Download what you want to keep. Anyone with the link "
+            "can open this session, so share it only on purpose."
+        )
+        st.caption("Your API key is not kept: paste it again after a reload.")
+        if st.button("Start a new, empty session", use_container_width=True):
+            state.new_session()
+            st.rerun()
 
 
 def credentials_sidebar() -> None:

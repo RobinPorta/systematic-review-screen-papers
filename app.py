@@ -16,6 +16,8 @@ import streamlit as st
 # Make `src/` importable even when the project is not installed as a package.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
+from screener import endpoint  # noqa: E402
+from screener.config import SetupError  # noqa: E402
 from screener.ui import editor, state, tabs  # noqa: E402
 
 st.set_page_config(page_title="SR screener · Jev", page_icon="📚", layout="wide")
@@ -65,35 +67,95 @@ def session_sidebar() -> None:
 def credentials_sidebar() -> None:
     """Per-visitor credentials. Kept in session state only — never written to disk."""
     env = state.load_settings()
-    st.markdown("**Credentials**")
-    st.text_input(
-        "TypeSafe API key",
-        key=state.TYPESAFE_KEY,
-        type="password",
-        placeholder="set in environment" if env.typesafe_api_key else "ts_…",
-        help="Create one at https://console.typesafe.ai/keys. Stays in this browser "
-        "session only; it is not saved on the server.",
+    state.restore_endpoint_inputs()
+    # Defaults go through session state: a widget given both a default and a restored
+    # value makes Streamlit warn.
+    st.session_state.setdefault(
+        state.BACKEND, state.BACKEND_CUSTOM if env.custom_endpoint else state.BACKEND_TYPESAFE
     )
-    with st.expander("Optional"):
+    st.session_state.setdefault(state.CONTEXT_LIMIT, env.context_limit)
+    st.markdown("**Model endpoint**")
+    backend = st.radio(
+        "Model endpoint",
+        [state.BACKEND_TYPESAFE, state.BACKEND_CUSTOM],
+        key=state.BACKEND,
+        label_visibility="collapsed",
+        help="TypeSafe's hosted Jev, or your own server that speaks the same System One "
+        "protocol, such as CLM (`clm-serve`).",
+    )
+
+    if backend == state.BACKEND_TYPESAFE:
         st.text_input(
-            "Jev model",
-            key=state.TYPESAFE_MODEL,
-            placeholder=env.typesafe_model or "jev-latest",
-            help="Pin a model version instead of the `jev-latest` alias.",
+            "TypeSafe API key",
+            key=state.TYPESAFE_KEY,
+            type="password",
+            placeholder="set in environment" if env.typesafe_api_key else "ts_…",
+            help="Create one at https://console.typesafe.ai/keys. Stays in this browser "
+            "session only; it is not saved on the server.",
         )
-        st.text_input(
-            "OpenAlex contact email",
-            key=state.OPENALEX_MAILTO,
-            placeholder=env.openalex_mailto or "you@example.org",
-            help="Not authentication — puts OpenAlex requests in the faster polite pool.",
-        )
+        with st.expander("Optional"):
+            st.text_input(
+                "Jev model",
+                key=state.TYPESAFE_MODEL,
+                placeholder=env.typesafe_model or "jev-latest",
+                help="Pin a model version instead of the `jev-latest` alias.",
+            )
+    else:
+        _custom_endpoint_inputs(env)
+    state.remember_endpoint_inputs()
 
     settings = state.settings()
-    st.caption(f"{'✓' if settings.typesafe_api_key else '✗'} TypeSafe key")
-    st.caption(f"{'·' if settings.openalex_mailto else '—'} OpenAlex contact (courtesy)")
-    st.caption("OpenAlex and Europe PMC need no key.")
-    if not settings.typesafe_api_key:
+    if settings.custom_endpoint:
+        st.caption(f"{'✓' if settings.endpoint_url else '✗'} Endpoint URL")
+    else:
+        st.caption(f"{'✓' if settings.typesafe_api_key else '✗'} TypeSafe key")
+    st.caption("ERIC and Europe PMC need no key.")
+    if settings.custom_endpoint and not settings.endpoint_url:
+        st.warning("Enter your endpoint's URL above to run screening. Search works without it.")
+    elif not settings.custom_endpoint and not settings.typesafe_api_key:
         st.warning("Paste a TypeSafe key above to run screening. Search works without one.")
+
+
+def _custom_endpoint_inputs(env) -> None:
+    st.text_input(
+        "Endpoint URL",
+        key=state.ENDPOINT_URL,
+        placeholder=env.endpoint_url or "http://127.0.0.1:8700",
+        help="The root of a server speaking the System One protocol — `clm-serve` "
+        "listens on port 8700 by default. It must be reachable from where this app runs.",
+    )
+    st.text_input(
+        "Endpoint API key",
+        key=state.ENDPOINT_KEY,
+        type="password",
+        placeholder="set in environment" if env.endpoint_api_key else "optional",
+        help="Only if the server requires one (`CLM_API_KEY`). Not kept after a reload.",
+    )
+    st.text_input(
+        "Model",
+        key=state.ENDPOINT_MODEL,
+        placeholder=env.endpoint_model or "first model the server lists",
+        help="Leave empty to use the first model at `/v1/models` (for CLM, `clm-latest`).",
+    )
+    st.number_input(
+        "Context limit (tokens)",
+        min_value=256,
+        max_value=131_072,
+        step=256,
+        key=state.CONTEXT_LIMIT,
+        help="The longest state the server accepts before truncating — `clm-serve "
+        "--max-tokens`, 2048 by default. Stage 2 splits papers to stay under it.",
+    )
+    if st.button("Check connection", use_container_width=True):
+        try:
+            models = endpoint.list_models(state.settings())
+        except SetupError as error:
+            st.error(str(error))
+        else:
+            if models:
+                st.success("Connected. Models: " + ", ".join(f"`{m}`" for m in models))
+            else:
+                st.warning("Connected, but the server lists no models.")
 
 
 def main() -> None:

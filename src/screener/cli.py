@@ -2,7 +2,7 @@
 
     screener doctor      check the setup before anything else
     screener demo        screen ten bundled records — needs no search API at all
-    screener search      fetch records from OpenAlex
+    screener search      fetch records from ERIC
     screener screen      stage 1 — title and abstract
     screener fulltext    stage 2 — full text, section by section
     screener sections    dump how one paper parsed, for debugging the routing
@@ -15,23 +15,26 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
 import typer
 
 from . import paths, report
-from .config import MissingCredential, ensure_dirs, load_settings
+from .config import Settings, SetupError, ensure_dirs, load_settings
 from .evaluate import format_metrics
 from .evaluate import evaluate as evaluate_metrics
 from .fulltext.europepmc import EuropePMCSource
-from .fulltext.sections import parse_sections
-from .openalex import OpenAlexError
+from .fulltext.base import resolve
+from .eric import EricError
 from .pipeline import (
     check_coverage,
     count_results,
     fetch_and_parse,
+    full_text_sources,
     load_protocol,
+    parse_full_text,
     screen_abstracts,
     screen_full_texts,
     search,
@@ -64,12 +67,23 @@ def _load(protocol_path: Path) -> Protocol:
         raise typer.BadParameter(f"{protocol_path} is not a valid protocol: {error}") from None
 
 
-def _settings():
+def _settings() -> Settings:
+    return load_settings()
+
+
+@contextmanager
+def _setup_errors():
+    """Turn a configuration problem into its message and a clean exit, not a traceback."""
     try:
-        return load_settings()
-    except MissingCredential as error:
-        _echo(str(error))
+        yield
+    except SetupError as error:
+        _echo(f"\n{error}")
         raise typer.Exit(code=1) from None
+
+
+def _usage(settings: Settings, usage, *, stage: str | None = None) -> str:
+    title = f"{settings.backend_label} usage" + (f" ({stage})" if stage else "")
+    return report.format_usage(usage, title=title, priced=not settings.custom_endpoint)
 
 
 def _progress(noun: str):
@@ -108,7 +122,7 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Log SDK an
 
 @app.command()
 def query(protocol: Path = ProtocolOption) -> None:
-    """Print the assembled OpenAlex filter without running it."""
+    """Print the query that is sent to ERIC, without running it."""
     _echo(filter_for(_load(protocol)))
 
 
@@ -120,54 +134,73 @@ _PROBE_DOI = "10.1371/journal.pone.0118173"
 def doctor() -> None:
     """Check the setup and report exactly what is and is not working.
 
-    Worth running before anything else. Only one credential is needed — OpenAlex and
+    Worth running before anything else. Only one credential is needed — ERIC and
     Europe PMC require no key, so most of what can go wrong here is a missing TypeSafe
-    key or no network.
+    key, an unreachable self-hosted endpoint, or no network.
     """
-    from typesafe_sdk import TypeSafeClient, TypeSafeError
-
+    from .endpoint import list_models
     from .fulltext.base import RetrievalStatus
-    from .openalex import OpenAlexClient
+    from .eric import EricClient
+    from .fulltext.eric_pdf import EricPdfSource
 
     settings = load_settings()
     problems = 0
 
-    _echo("TypeSafe (Jev)  — the one credential this project needs")
-    if not settings.typesafe_api_key:
-        _echo("  ✗ TYPESAFE_API_KEY is not set — see Credentials in the README")
+    if settings.custom_endpoint:
+        _echo(f"Custom endpoint  — {settings.endpoint_url} (SCREENER_ENDPOINT_URL)")
+    else:
+        _echo("TypeSafe (Jev)  — the one credential this project needs")
+    try:
+        models = list_models(settings)
+    except SetupError as error:
+        _echo(f"  ✗ {error}")
         problems += 1
     else:
-        try:
-            with TypeSafeClient(api_key=settings.typesafe_api_key) as client:
-                models = [m.name for m in client.models.list().models]
-            _echo(f"  ✓ key accepted; models available: {', '.join(models) or '(none listed)'}")
+        _echo(f"  ✓ reachable; models available: {', '.join(models) or '(none listed)'}")
+        if settings.custom_endpoint:
+            model = settings.endpoint_model or (models[0] if models else None)
+            _echo(f"  · model used: {model or '(none — the server lists no models)'}")
+            _echo(f"  · stage-2 state budget: ~{settings.state_budget:,} tokens "
+                  f"(80% of a {settings.context_limit:,}-token limit, SCREENER_CONTEXT_LIMIT)")
+            if not models and not settings.endpoint_model:
+                problems += 1
+        else:
             _echo(f"  · default model: {settings.typesafe_model or 'jev-latest'}")
-        except TypeSafeError as error:
-            _echo(f"  ✗ {error}")
-            problems += 1
 
-    _echo("\nOpenAlex (search + abstracts)  — no key required")
-    _echo(f"  · contact address: {settings.openalex_mailto or 'not set (polite pool disabled)'}")
+    _echo("\nERIC (search + abstracts)  — no key required")
+    sample = None
     try:
-        with OpenAlexClient(settings) as client:
-            total = client.count('title_and_abstract.search:"systematic review"')
-            # page_size=1 as well as limit=1: the client pages 200 at a time by default,
-            # and a diagnostic has no business pulling 200 records to look at one.
+        with EricClient() as client:
+            total = client.count('title:"systematic review"')
+            # page_size=1 as well as limit=1: a diagnostic has no business pulling a
+            # whole page of records to look at one.
             sample = next(iter(client.search(
-                'title_and_abstract.search:"systematic review",has_abstract:true',
+                'title:"systematic review" AND e_fulltextauth:1',
                 limit=1, page_size=1, use_cache=False,
             )), None)
-            credits = client.credits_remaining
-        _echo(f"  ✓ reachable; the probe query matches {total:,} works")
+        _echo(f"  ✓ reachable; the probe query matches {total:,} records")
         if sample is not None and sample.has_abstract:
             _echo(f"  ✓ abstracts are being returned ({len(sample.abstract)} chars on the sample)")
         else:
             _echo("  ? the probe returned no abstract, which is unexpected")
-        if credits is not None:
-            _echo(f"  · rate-limit credits remaining: {credits:,}")
     except Exception as error:  # noqa: BLE001 - the report is the point, not the type
         _echo(f"  ✗ {error}")
         problems += 1
+
+    _echo("\nERIC PDFs (full text)  — no key required")
+    if sample is None:
+        _echo("  ? skipped: no record to probe with")
+    else:
+        try:
+            with EricPdfSource() as source:
+                retrieval = source.fetch(sample, use_cache=False)
+            if retrieval.ok and retrieval.full_text is not None:
+                _echo(f"  ✓ full text retrievable (probed {sample.id}, "
+                      f"{len(retrieval.full_text.content):,} chars of text)")
+            else:
+                _echo(f"  ? probe of {sample.id} returned {retrieval.status.value}: {retrieval.detail}")
+        except Exception as error:  # noqa: BLE001
+            _echo(f"  ✗ {error}")
 
     _echo("\nEurope PMC (full text)  — no key required")
     try:
@@ -193,24 +226,24 @@ def search_cmd(
     limit: Optional[int] = typer.Option(None, "--limit", "-n", help="Stop after this many records."),
     out: Optional[Path] = typer.Option(None, "--out", "-o", help="Default: the protocol's run directory."),
     count_only: bool = typer.Option(False, "--count", help="Only report how many results match."),
-    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the cached OpenAlex pages."),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the cached ERIC pages."),
 ) -> None:
-    """Run the protocol's query against OpenAlex."""
+    """Run the protocol's query against ERIC."""
     spec = _load(protocol)
     out = out or paths.run_paths(protocol).records
     settings = _settings()
-    _echo(f"filter: {filter_for(spec)}")
+    _echo(f"query: {filter_for(spec)}")
 
     try:
         if count_only:
-            _echo(f"{count_results(spec, settings=settings):,} matching works")
+            _echo(f"{count_results(spec, settings=settings):,} matching records")
             return
 
         outcome = search(
             spec, settings=settings, limit=limit, use_cache=not no_cache,
             on_page=_progress("fetched"),
         )
-    except (OpenAlexError, MissingCredential) as error:
+    except (EricError, SetupError) as error:
         _echo(f"\n{error}")
         raise typer.Exit(code=1) from None
 
@@ -225,8 +258,6 @@ def search_cmd(
             f"  {outcome.without_abstract} kept with no abstract — these will fail the "
             "informative guard and go to a human, not be dropped"
         )
-    if outcome.credits_remaining is not None:
-        _echo(f"  OpenAlex credits remaining: {outcome.credits_remaining:,}")
 
 
 @app.command()
@@ -251,7 +282,8 @@ def demo(
 
     items = list(read_jsonl(source))
     settings = _settings()
-    run = screen_abstracts(spec, items, settings=settings, use_cache=not no_cache)
+    with _setup_errors():
+        run = screen_abstracts(spec, items, settings=settings, use_cache=not no_cache)
 
     for result in run.results:
         if result.error:
@@ -274,7 +306,7 @@ def demo(
             _echo(f"     reason: {result.decision.exclusion_reason}")
 
     _echo("\n" + report.format_counts(run.counts()))
-    _echo(report.format_usage(run.usage))
+    _echo(_usage(settings, run.usage))
 
     run_dir = paths.run_paths(protocol)
     run.write_jsonl(run_dir.screened)
@@ -318,21 +350,23 @@ def screen(
         _echo("nothing to screen")
         raise typer.Exit(code=1)
 
+    settings = _settings()
     tokens, usd = estimate_cost(spec, items)
-    _echo(f"{len(items)} records, ~{tokens:,} input tokens, ~${usd:.4f}")
+    price = "self-hosted, no per-token price" if settings.custom_endpoint else f"~${usd:.4f}"
+    _echo(f"{len(items)} records, ~{tokens:,} input tokens, {price}")
     if dry_run:
         return
 
-    settings = _settings()
-    run = screen_abstracts(
-        spec, items, settings=settings, concurrency=concurrency,
-        use_cache=not no_cache, on_progress=_progress("screened"),
-    )
+    with _setup_errors():
+        run = screen_abstracts(
+            spec, items, settings=settings, concurrency=concurrency,
+            use_cache=not no_cache, on_progress=_progress("screened"),
+        )
     run.write_jsonl(out)
     report.write_screening_csv(spec, run, run_dir.screened_csv)
 
     _echo(f"\n{report.format_counts(run.counts())}")
-    _echo(report.format_usage(run.usage))
+    _echo(_usage(settings, run.usage))
     _echo(f"-> {out} and {run_dir.screened_csv}")
 
     failed = [r for r in run.results if r.error]
@@ -376,26 +410,27 @@ def fulltext(
         coverage, _ = check_coverage(
             candidates, settings=settings, on_progress=_progress("checked")
         )
-        _echo(f"\nEurope PMC coverage: {coverage.retrievable}/{coverage.total} "
+        _echo(f"\nFull-text coverage (ERIC PDFs + Europe PMC): {coverage.retrievable}/{coverage.total} "
               f"({coverage.percentage:.0f}%)")
         for status, count in sorted(coverage.by_status.items(), key=lambda kv: -kv[1]):
             _echo(f"  {status}: {count}")
         if coverage.percentage < 50:
             _echo(
-                "\nEurope PMC holds full text for its biomedical open-access subset only, "
-                "so a low number here is expected rather than a fault for any topic outside "
-                "the life sciences. Everything it cannot supply is reported as PRISMA's "
-                "'reports not retrieved'."
+                "\nERIC may display the full text of only some of its records, and Europe "
+                "PMC holds its biomedical open-access subset only, so a low number here is "
+                "expected rather than a fault. Everything they cannot supply is reported as "
+                "PRISMA's 'reports not retrieved'."
             )
         return
 
     items = fetch_and_parse(
         candidates, settings=settings, use_cache=not no_cache, on_progress=_progress("fetched")
     )
-    run = screen_full_texts(
-        spec, items, settings=settings, concurrency=concurrency,
-        use_cache=not no_cache, on_progress=_progress("assessed"),
-    )
+    with _setup_errors():
+        run = screen_full_texts(
+            spec, items, settings=settings, concurrency=concurrency,
+            use_cache=not no_cache, on_progress=_progress("assessed"),
+        )
     run.write_jsonl(out)
     report.write_fulltext_csv(spec, run, run_dir.fulltext_csv)
 
@@ -405,31 +440,39 @@ def fulltext(
         _echo("exclusion reasons:")
         for reason, count in sorted(reasons.items(), key=lambda kv: -kv[1]):
             _echo(f"  {reason}: {count}")
-    _echo(report.format_usage(run.usage, title="Jev usage (stage 2)"))
+    _echo(_usage(settings, run.usage, stage="stage 2"))
     _echo(f"-> {out} and {run_dir.fulltext_csv}")
 
 
 @app.command()
 def sections(
-    doi: str = typer.Argument(..., help="DOI of an open-access paper held in Europe PMC."),
+    identifier: str = typer.Argument(
+        ..., help="An ERIC number (EJ… or ED…) with a full-text PDF, or the DOI of a paper in Europe PMC."
+    ),
     chars: int = typer.Option(160, "--chars", help="Preview length per section."),
 ) -> None:
     """Show how one paper parses into sections. Use this when routing looks wrong."""
-    settings = _settings()
-    record = Record(id=doi, doi=doi)
-    with EuropePMCSource(settings) as source:
-        retrieval = source.fetch(record)
+    if identifier.upper().startswith(("EJ", "ED")) and identifier[2:].isdigit():
+        record = Record(id=identifier.upper(), eric_fulltext=True)
+    else:
+        record = Record(id=identifier, doi=identifier)
+    with full_text_sources() as sources:
+        retrieval = resolve(record, sources)
 
     if not retrieval.ok or retrieval.full_text is None:
-        _echo(f"could not retrieve {doi}: {retrieval.status.value} — {retrieval.detail or ''}")
+        _echo(f"could not retrieve {identifier}: {retrieval.status.value} — {retrieval.detail or ''}")
         raise typer.Exit(code=1)
 
-    parsed = parse_sections(retrieval.full_text.content)
+    parsed = parse_full_text(retrieval.full_text, record)
+    _echo(f"source:   {retrieval.source}")
     _echo(f"title:    {parsed.title[:120]}")
     _echo(f"abstract: {len(parsed.abstract)} chars")
     _echo(f"sections: {len(parsed.sections)}\n")
     for section in parsed.sections:
-        canonical = section.canonical.value if section.canonical else "UNMATCHED"
+        canonical = (
+            section.canonical.value if section.canonical
+            else "body" if section.unlabelled_body else "UNMATCHED"
+        )
         indent = "  " * section.level
         _echo(f"{indent}[{canonical:<14}] {section.title or '(no heading)'}  ({section.tokens} tok)")
         if section.text:

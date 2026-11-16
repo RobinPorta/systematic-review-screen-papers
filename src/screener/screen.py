@@ -19,11 +19,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 from pydantic import BaseModel, Field
-from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy, TypeSafeError
+from typesafe_sdk import TypeSafeError
 
 from .answers import AnswerValue, from_json, normalise, to_json
 from .config import CACHE_DIR, Settings
 from .decide import Decision, Label, decide
+from .endpoint import open_client
 from .protocol import Protocol
 from .questions import stage1_questions
 from .records import Record
@@ -104,12 +105,18 @@ class ScreenRun(BaseModel):
         return run
 
 
-def questions_fingerprint(questions: dict[str, Any]) -> str:
-    """Hash the questions so editing a criterion invalidates the cache for that run."""
+def questions_fingerprint(questions: dict[str, Any], *, salt: str = "") -> str:
+    """Hash the questions so editing a criterion invalidates the cache for that run.
+
+    `salt` identifies the backend (see `Settings.cache_salt`), so answers cached from one
+    model are never replayed as another's. Empty keeps the hashes cached before it existed.
+    """
     payload = {
         qid: q.model_dump(mode="json") if hasattr(q, "model_dump") else q
         for qid, q in sorted(questions.items())
     }
+    if salt:
+        payload = {"__backend__": salt, "questions": payload}
     blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -154,18 +161,13 @@ async def screen_records(
     if not records:
         return run
 
-    api_key = settings.require_typesafe()
     questions = stage1_questions(protocol)
-    fingerprint = questions_fingerprint(questions)
+    fingerprint = questions_fingerprint(questions, salt=settings.cache_salt)
     cache_root = (cache_dir if cache_dir is not None else CACHE_DIR / "jev")
     semaphore = asyncio.Semaphore(max(1, concurrency))
     done = 0
 
-    async with AsyncTypeSafeClient(
-        api_key=api_key,
-        model=settings.typesafe_model,
-        retry=RetryPolicy(max_retries=4),
-    ) as client:
+    async with open_client(settings) as client:
 
         async def one(record: Record) -> ScreenResult:
             nonlocal done

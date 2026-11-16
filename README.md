@@ -35,22 +35,23 @@ uv run screener demo     # screens ten bundled example records against the real 
 
 ## Credentials
 
-This project needs **one API key**. The two literature sources are open APIs and need no
-key, account or institutional subscription:
+This project needs **one API key**, for TypeSafe, or none if you run your own model
+server (see [A self-hosted endpoint](#a-self-hosted-endpoint-eg-clm)). The two literature
+sources are open APIs and need no key, account or institutional subscription:
 
-- **OpenAlex** provides search and abstracts.
-- **Europe PMC** provides full text.
+- **ERIC**, the U.S. Institute of Education Sciences' index of education research, provides
+  search, abstracts and, for the records it may display, full-text PDFs.
+- **Europe PMC** provides full text for papers ERIC has no PDF of, when they have a DOI.
 
 | Setting | Service | Required? | Cost |
 | --- | --- | --- | --- |
 | TypeSafe API key | TypeSafe (Jev) | **Yes** — every screening decision | Paid, but tiny |
 | Jev model | TypeSafe | No — defaults to `jev-latest` | — |
-| OpenAlex contact email | OpenAlex | No, but please | Free |
 
-**In the web app**, type all three into the sidebar. They stay in your browser session and
-are never written to disk. **For the CLI**, export them as environment variables:
-`TYPESAFE_API_KEY`, `TYPESAFE_DEFAULT_MODEL` and `OPENALEX_MAILTO`. The app also falls back
-to these variables when the sidebar is empty. Never commit a key.
+**In the web app**, type them into the sidebar. They stay in your browser session and are
+never written to disk. **For the CLI**, export them as environment variables:
+`TYPESAFE_API_KEY` and `TYPESAFE_DEFAULT_MODEL`. The app also falls back to these variables
+when the sidebar is empty. Never commit a key.
 
 ### The TypeSafe key
 
@@ -81,18 +82,47 @@ Every run reports what it actually used.
 behind it can change without any change on your side. Pin a version, e.g. `jev-1.13.0`,
 once you have tuned thresholds against it.
 
-### The OpenAlex contact email
+### A self-hosted endpoint (e.g. CLM)
 
-This is **not authentication**, and it unlocks no extra data. It lets OpenAlex reach you if
-a script misbehaves, and it puts your requests in their faster "polite pool". Everything
-works without it.
+Instead of TypeSafe's hosted Jev, the screener can call your own server, as long as it
+speaks the same System One protocol: `POST /v1/systemone` and `GET /v1/models` with a Bearer
+key. [CLM](https://github.com/Contrastive-LM/CLM) (`clm-serve`) is one such server. Its
+setup, from its README, is roughly:
 
-OpenAlex meters usage in credits. A 200-record page costs about ten credits, against a
-daily free allowance of roughly 20,000 records. Searches report the credits remaining.
+```bash
+pip install contrastive-lm
+vllm serve Qwen/Qwen3-8B --served-model-name qwen3-8b --runner pooling --max-model-len 2048 --port 8090
+clm-serve            # listens on http://127.0.0.1:8700
+```
 
-### Europe PMC
+In the sidebar, choose **Custom (self-hosted)** and fill in:
 
-Nothing to configure. See [Known limits](#known-limits) for what it can and cannot supply.
+| Field | Env variable (CLI and fallback) | Notes |
+| --- | --- | --- |
+| Endpoint URL | `SCREENER_ENDPOINT_URL` | e.g. `http://127.0.0.1:8700` |
+| Endpoint API key | `SCREENER_ENDPOINT_API_KEY` | Only if the server requires one (`CLM_API_KEY`) |
+| Model | `SCREENER_ENDPOINT_MODEL` | Empty means the first model the server lists (`clm-latest` for CLM) |
+| Context limit | `SCREENER_CONTEXT_LIMIT` | The server's state limit in tokens: `clm-serve --max-tokens`, 2048 by default |
+
+**Check connection** lists the models the server offers. For the CLI, set the variables and
+run `uv run screener doctor`.
+
+- **Reachability.** The URL must be reachable from wherever the app runs. A deployed app
+  cannot reach `localhost` on your machine.
+- **Context limit.** CLM truncates longer states without an error, so stage 2 splits each
+  paper into calls of at most 80% of the limit. The Screen tab warns about any abstract
+  that would still be cut.
+- **Cost.** There is no per-token price, so costs are shown as tokens only.
+- **Cache.** In the CLI and single-user mode, cached answers are kept separately per
+  endpoint and model, so they never mix with Jev's.
+- **Thresholds.** Thresholds tuned on Jev will not carry over. Label a sample and re-tune
+  on the **Evaluate** tab.
+- **Key.** The endpoint URL, model and limit survive a page reload. The API key, like the
+  TypeSafe key, does not.
+
+### ERIC and Europe PMC
+
+Nothing to configure. See [Known limits](#known-limits) for what they can and cannot supply.
 
 ---
 
@@ -103,10 +133,10 @@ Seven tabs, in pipeline order:
 | Tab | What it does |
 | --- | --- |
 | **0 · Protocol** | Choose, create, import, download and edit review protocols |
-| **1 · Search** | Build the OpenAlex query, count the matches, fetch the records |
+| **1 · Search** | Write the ERIC query, count the matches, fetch the records |
 | **2 · Screen** | Stage 1: one Jev call per title/abstract, with a cost estimate first |
 | **3 · Review** | Browse the decisions, highest-ranked first, with the probabilities behind each |
-| **4 · Full text** | Stage 2: check Europe PMC coverage, then screen the retrievable papers |
+| **4 · Full text** | Stage 2: check which full texts are obtainable, then screen them |
 | **5 · Label** | Hand-screen a stratified calibration sample (the ground truth) |
 | **6 · Evaluate** | Recall, precision and work saved against your labels; threshold sweep; PRISMA flow |
 
@@ -144,7 +174,7 @@ code in the page URL.
   CSV, and labels as CSV. A downloaded protocol can be imported again.
 - **Your API key is never kept.** Paste it again after a reload.
 - **Only public data touches the disk.** The app writes nothing except the shared caches of
-  public OpenAlex and Europe PMC data, which are rebuilt if they disappear. Jev answers are
+  public ERIC and Europe PMC data, which are rebuilt if they disappear. Jev answers are
   not cached, because they were bought with your key.
 
 A large review uses a fair amount of server memory: roughly 190 MB for 5,000 screened
@@ -169,11 +199,12 @@ new reviews start from.
 ```yaml
 name: My review
 description: For humans; not sent to Jev.
-query: '"exact phrase" AND (outcome OR effect)'   # OpenAlex full-text search
-filters:            # applied by OpenAlex and re-checked in code, never asked of Jev
+query: '"exact phrase" AND (outcome OR effect)'   # sent to ERIC exactly as written
+filters:            # applied in code to the fetched records, never asked of Jev
   year_from: 2000
-  languages: [en]
-  types: [article, review]
+  languages: [en]               # ISO codes; records with no language count as English
+  types: [Journal Articles]     # ERIC publication types; any one match keeps the record
+  peer_reviewed_only: false
   require_abstract: false
 thresholds:
   include_min: 0.6      # an inclusion criterion must reach this to count as met
@@ -326,29 +357,53 @@ tokens. So stage 1 asks **everything at once**: all criteria, classifications an
 one call per record, including questions that only matter for some records. This is the
 *speculative fan-out* pattern.
 
+### Searching ERIC
+
+The protocol's `query` is ERIC search syntax, which is Solr: quoted phrases, `AND`, `OR`,
+`NOT` and parentheses all work.
+
+- **Sent as written.** The query goes to ERIC exactly as you wrote it, with nothing added,
+  so it finds what the same query finds on eric.ed.gov and the count matches.
+- **Filters come after.** The protocol's filters (years, languages, publication types, peer
+  review) are applied in code to the fetched records. The search reports how many records
+  each one removed. "Fetch at most" counts records before filtering.
+- **What ERIC searches.** With no field names, each term may match in the title, abstract,
+  descriptors, source or author. Word forms are matched exactly there, so spell out
+  plurals: `"board game" OR "board games"`.
+- **Narrowing.** Name fields in the query yourself: `title:(…)`, `description:(…)`,
+  `subject:"Educational Games"` for an ERIC descriptor, or
+  `publicationdateyear:[2000 TO *]` to filter years at the source.
+- **Length.** ERIC rejects very long queries (HTTP 414); the app reports it.
+- **Format.** Records are fetched as CSV, 500 at a time. One small JSON request comes
+  first, because only JSON reports the total and, for a query ERIC cannot parse, the error.
+  In CSV a bad query looks exactly like an empty result.
+- **Fields requested:** `id`, `title`, `author`, `publicationdateyear`, `language`, `url`,
+  plus `description` (the abstract), `subject` (descriptors), `publicationtype`, `source`,
+  `sourceid` (citation), `peerreviewed`, `educationlevel`, `e_fulltextauth` (ERIC can
+  serve the PDF) and `issn`.
+
 ### What never goes to the model
 
 Years, counts, dates, languages and document types never go to Jev. It is documented as
-unreliable at counting and at comparing dates, while a search index does these exactly and
-for free. They become part of the OpenAlex filter:
+unreliable at counting and at comparing dates, while ordinary code does these exactly and
+for free. ERIC returns the year, language, publication type and peer-review flag on every
+record, so the protocol's filters are checked in code after fetching:
 
-```python
-"from_publication_date:2000-01-01"   # inclusive bounds, no off-by-one to get wrong
-"language:en|it"
-"type:article|review"
-```
+- **Years** are inclusive bounds.
+- **Languages** are ISO codes matched against ERIC's language names. A record with no
+  language recorded is kept, because ERIC's default is English.
+- **Publication types**: a record carrying any one of the listed types is kept.
 
-They are then **re-checked in code** after fetching, because OpenAlex returns
-`publication_year`, `language` and `type` on every work. `build_filter` rejects a comma in
-the topical query, because OpenAlex would read it as a filter separator and silently
-truncate the search.
+What the model does see for each record is deliberately small: title, abstract, ERIC
+descriptors, journal, publication type and education level.
 
 ### Stage 2: routing sections, not whole papers
 
 Jev's accuracy falls as the state fills with text unrelated to the decision, so a full
 paper is never sent whole. Instead:
 
-1. The full text is parsed into sections.
+1. The full text is fetched: ERIC's own PDF when ERIC may display it, otherwise Europe PMC's
+   XML by DOI. It is then parsed into sections.
 2. The headings are mapped onto the canonical section set.
 3. Each question reads only the sections its protocol entry routes it to.
 4. Questions with the same routing share a call, so a paper takes a handful of focused
@@ -368,6 +423,11 @@ The routing follows four rules, all in [screen_fulltext.py](src/screener/screen_
 - **A pre-flight token check** splits any bundle that would exceed Jev's 32k-token state
   budget. It splits on section boundaries first, and truncates only a single section that
   is too large on its own.
+
+**PDFs are a poorer source than XML.** A PDF has no markup, so headings are recognised from
+the extracted text, and only some are found. The rest of the paper is kept as unlabelled
+body text in small pieces, which the fallback rule above reads. A scanned PDF with no text
+layer counts as not retrieved.
 
 PRISMA 2020 requires full-text exclusions to be reported with reasons. The **exclusion
 reason** is a Choice over the protocol's exclusion criteria. It is asked on every paper and
@@ -404,13 +464,13 @@ is not the fix.
 ```bash
 uv run screener doctor                         # check the key and both APIs
 uv run screener demo                           # ten bundled records, no search needed
-uv run screener query                          # print the assembled OpenAlex filter
+uv run screener query                          # print the query sent to ERIC
 uv run screener search --count                 # how big is this search?
 uv run screener search --limit 200             # fetch records
 uv run screener screen --dry-run               # cost estimate, no calls
 uv run screener screen                         # stage 1
 uv run screener fulltext --check-entitlement   # how many full texts are obtainable?
-uv run screener sections 10.1371/journal.pone.0118173   # how did one paper parse?
+uv run screener sections EJ1148470             # how did one paper parse? (ERIC number or DOI)
 uv run screener fulltext                       # stage 2
 uv run screener label --stage abstracts -n 50  # draw a calibration sample, then fill in gold_label
 uv run screener evaluate --stage abstracts
@@ -425,7 +485,7 @@ Results go to `data/runs/<protocol file name>/`.
 
 `screener demo` screens [examples/sample_records.jsonl](examples/sample_records.jsonl)
 against the board-games protocol. It holds ten illustrative records in the shape the
-OpenAlex fetcher produces. They are **written for this project and are not real papers**:
+ERIC fetcher produces. They are **written for this project and are not real papers**:
 the DOIs sit under the placeholder prefix `10.0000/` and none resolve. Each one puts
 pressure on a specific criterion:
 
@@ -450,17 +510,14 @@ own output measures nothing.
 
 ## Known limits
 
-- **Europe PMC holds full text for its biomedical open-access subset only.** For topics
-  outside the life sciences, expect most stage-1 includes to be unobtainable. On the
-  example corpus, about 30% are retrievable. Check coverage first, since it costs nothing.
-  Everything it cannot supply is reported as PRISMA's "reports not retrieved". For broader
-  coverage, implement `FullTextSource` in [fulltext/base.py](src/screener/fulltext/base.py),
-  for example Unpaywall, or a folder of PDFs your library obtained.
-- **OpenAlex is one database.** A publishable review would run the same strategy across
-  other databases too, and de-duplicate across them.
-- **About a quarter of OpenAlex works carry no abstract.** They are kept, because a missing
-  abstract is not evidence of ineligibility. They fail the guard and land in `maybe` for a
-  human.
+- **Full text is available for a minority of records.** ERIC may display the PDF of
+  roughly a quarter of its records, and Europe PMC holds its biomedical open-access subset
+  only. Check coverage first, since it costs nothing. Everything they cannot supply is
+  reported as PRISMA's "reports not retrieved". For broader coverage, implement
+  `FullTextSource` in [fulltext/base.py](src/screener/fulltext/base.py), for example
+  Unpaywall, or a folder of PDFs your library obtained.
+- **ERIC is one database, and it covers education.** A publishable review would run the same
+  strategy across other databases too, and de-duplicate across them.
 - **Jev's primary training language is English.** Spot-check records in other languages.
 - **Metrics are only as good as the calibration sample.** Fifty records give a wide
   confidence interval on recall.
@@ -475,10 +532,11 @@ own output measures nothing.
 | `TYPESAFE_API_KEY is not set` | No key in the sidebar or environment | Paste it in the sidebar, or `export TYPESAFE_API_KEY=...` |
 | TypeSafe `401` | Key wrong or revoked | Create a new one at <https://console.typesafe.ai/keys> |
 | TypeSafe `429` | Rate limit (250k tok/s, 1200 req/min) | The SDK retries with backoff; lower the concurrency if it persists |
-| OpenAlex `429` | Daily credit allowance used up | The client backs off; cached pages cost nothing |
-| Records with no abstract | ~24% of OpenAlex works lack one | Expected; they go to a human |
-| Most full texts `not_found` | Europe PMC is biomedical open access only | Expected; reported as PRISMA "not retrieved" |
-| Search is slow | Not in the polite pool | Set the OpenAlex contact email |
+| `ERIC could not run the query` | The query is not valid ERIC (Solr) syntax | Check quotes and parentheses; the message quotes ERIC's own complaint |
+| Many fetched records are dropped | Publication type, year or peer-review filter | The search lists what each filter removed; widen the filters in the protocol |
+| Most full texts `not_found` | ERIC has no PDF and Europe PMC does not hold the paper | Expected; reported as PRISMA "not retrieved" |
+| `Could not use the endpoint at …` | Custom endpoint unreachable, or needs a key | Check the URL and key; **Check connection** or `screener doctor` shows the exact error |
+| `unknown model` from a custom endpoint | The model name is not one the server has | Leave **Model** empty, or use a name from **Check connection** |
 
 ## Layout
 
@@ -490,20 +548,21 @@ examples/                     ten synthetic records for `screener demo`
 src/screener/
   protocol.py                 protocol schema and YAML loading
   library.py                  protocol library: examples, user protocols, import
-  query.py                    OpenAlex filter assembly
+  query.py                    the query sent to ERIC, as written
   questions.py                protocol -> Jev questions; stage-2 bundling
-  openalex.py                 OpenAlex client
-  fulltext/                   Europe PMC retrieval and section parsing
+  eric.py                     ERIC search client (CSV)
+  fulltext/                   ERIC PDF and Europe PMC retrieval, section parsing
   screen.py                   stage 1
   screen_fulltext.py          stage 2
   decide.py                   the decision policy: pure, no API calls
   evaluate.py / tune.py       metrics and threshold sweep
   prisma.py                   PRISMA flow counts
   pipeline.py                 the steps the CLI and UI share
+  endpoint.py                 opens the model client: TypeSafe or a self-hosted endpoint
   paths.py                    per-protocol run directories for the CLI
   ui/                         Streamlit tabs, protocol editor, session state
 data/                         runtime files, gitignored
-  cache/                      OpenAlex and Europe PMC caches (+ Jev answers for the CLI and single-user mode)
+  cache/                      ERIC and Europe PMC caches (+ Jev answers for the CLI and single-user mode)
   runs/<protocol>/            the CLI's records, results and labels
   protocols/                  protocols created in the UI in single-user mode
 ```

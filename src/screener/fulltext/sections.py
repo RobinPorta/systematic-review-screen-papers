@@ -75,6 +75,9 @@ class ParsedSection(BaseModel):
     text: str
     level: int = 0
     canonical: Section | None = None
+    #: Running text with no heading of its own, as extracted from a PDF. There is nothing
+    #: to label, so it is never sent for section labelling; it is still read as body text.
+    unlabelled_body: bool = False
 
     @property
     def tokens(self) -> int:
@@ -91,7 +94,7 @@ class ParsedSections(BaseModel):
     @property
     def unresolved(self) -> list[ParsedSection]:
         """Sections whose heading the regex canonicaliser could not place."""
-        return [s for s in self.sections if s.canonical is None]
+        return [s for s in self.sections if s.canonical is None and not s.unlabelled_body]
 
     def text_for(self, wanted: Iterable[Section]) -> dict[str, str]:
         """Collect the text of every requested canonical section.
@@ -270,4 +273,92 @@ def parse_sections(xml: str | bytes) -> ParsedSections:
         if body:
             sections = [ParsedSection(title="", text=body, level=0, canonical=None)]
 
+    return ParsedSections(title=title, abstract=abstract, sections=sections)
+
+
+# ------------------------------------------------------------------ plain text (PDFs)
+
+#: Body text extracted from a PDF is cut into pieces of about this many characters (roughly
+#: a thousand tokens), so stage 2 can fit as many as its state budget allows instead of
+#: having to take or leave one enormous section.
+CHUNK_CHARS = 4000
+
+_PAGE_NUMBER = re.compile(r"^\s*(?:page\s+)?\d{1,4}(?:\s+of\s+\d{1,4})?\s*$", re.IGNORECASE)
+_END_MATTER = re.compile(r"^(?:references?|bibliography|works cited|literature cited)\b", re.IGNORECASE)
+_HYPHEN_BREAK = re.compile(r"(\w)-\n(?=[a-z])")
+_HEADING_MAX_WORDS = 6
+_HEADING_MAX_CHARS = 60
+
+
+def _as_heading(line: str) -> tuple[str, Section] | None:
+    """Whether a line of extracted text is a section heading the canonicaliser knows.
+
+    PDF text has no markup, so this is deliberately strict: short, starting with a capital
+    (after any numbering), carrying no sentence punctuation, and naming a known section.
+    The last line of a paragraph is short too, but it ends with a full stop.
+    """
+    text = line.strip().rstrip(":").strip()
+    if not text or len(text) > _HEADING_MAX_CHARS or text[-1] in ".,;?!":
+        return None
+    bare = _LEADING_NUMBER.sub("", text).strip()
+    if not bare or not bare[0].isupper() or len(bare.split()) > _HEADING_MAX_WORDS:
+        return None
+    if any(character.isdigit() for character in bare):
+        return None
+    canonical = canonicalise(bare)
+    return (bare, canonical) if canonical is not None else None
+
+
+def _chunks(lines: list[str]) -> list[str]:
+    """Join extracted lines into pieces of about `CHUNK_CHARS`, never splitting a line."""
+    pieces: list[str] = []
+    current: list[str] = []
+    size = 0
+    for line in lines:
+        current.append(line)
+        size += len(line) + 1
+        if size >= CHUNK_CHARS:
+            pieces.append(" ".join(current))
+            current, size = [], 0
+    if current:
+        pieces.append(" ".join(current))
+    return pieces
+
+
+def parse_plain_text(text: str, *, title: str = "", abstract: str = "") -> ParsedSections:
+    """Split text extracted from a PDF into sections.
+
+    The title and abstract come from the bibliographic record, which has them clean; the
+    PDF's own front page is a jumble of running heads and affiliations. Headings are found
+    line by line. Text under a recognised heading keeps that label. Everything else — the
+    text before the first heading, a paper with no recognisable headings at all, and
+    whatever sits under an "Abstract" heading, which in a PDF with few headings is often
+    the whole paper — is kept as unlabelled body, so stage 2 still reads it. Anything from
+    the reference list onwards is dropped.
+    """
+    text = _HYPHEN_BREAK.sub(r"\1", text.replace("\r\n", "\n").replace("\r", "\n"))
+    lines = [_WHITESPACE.sub(" ", line).strip() for line in text.split("\n")]
+
+    blocks: list[tuple[str, Section | None, list[str]]] = [("", None, [])]
+    for line in lines:
+        if not line or _PAGE_NUMBER.match(line):
+            continue
+        if _END_MATTER.match(line) and len(line.split()) <= 3:
+            break
+        heading = _as_heading(line)
+        if heading is not None:
+            blocks.append((heading[0], heading[1], []))
+        else:
+            blocks[-1][2].append(line)
+
+    sections: list[ParsedSection] = []
+    for heading, canonical, body in blocks:
+        labelled = canonical is not None and canonical is not Section.ABSTRACT
+        for piece in _chunks(body):
+            sections.append(ParsedSection(
+                title=heading if labelled else "",
+                text=piece,
+                canonical=canonical if labelled else None,
+                unlabelled_body=not labelled,
+            ))
     return ParsedSections(title=title, abstract=abstract, sections=sections)

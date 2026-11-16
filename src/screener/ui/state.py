@@ -7,7 +7,7 @@ nothing on disk is consulted for it again, so deleting files on the server never
 session's work. A server restart, an hour of inactivity, or being the longest-idle of too
 many sessions clears it: download what you want to keep.
 
-The only files the app touches are the shared caches of public OpenAlex and Europe PMC
+The only files the app touches are the shared caches of public ERIC and Europe PMC
 data, which are rebuilt on demand if they disappear.
 
 Set `SCREENER_SINGLE_USER=1` to also load from, and write through to, `data/`: the same
@@ -37,7 +37,17 @@ from .store import SessionStore
 #: browser session and are never written to disk, so each visitor brings their own key.
 TYPESAFE_KEY = "typesafe_api_key"
 TYPESAFE_MODEL = "typesafe_model"
-OPENALEX_MAILTO = "openalex_mailto"
+#: Which backend answers the questions, and where a self-hosted one lives.
+BACKEND = "model_backend"
+BACKEND_TYPESAFE = "TypeSafe (cloud)"
+BACKEND_CUSTOM = "Custom (self-hosted)"
+ENDPOINT_URL = "endpoint_url"
+ENDPOINT_KEY = "endpoint_api_key"
+ENDPOINT_MODEL = "endpoint_model"
+CONTEXT_LIMIT = "context_limit"
+#: Endpoint inputs kept in the session store, so a reload does not lose them. The
+#: endpoint's API key is deliberately not among them, like the TypeSafe key.
+_REMEMBERED = (BACKEND, ENDPOINT_URL, ENDPOINT_MODEL, CONTEXT_LIMIT)
 
 STAGES = ("abstracts", "fulltext")
 
@@ -110,12 +120,42 @@ def _typed(key: str) -> str | None:
 def settings() -> Settings:
     """Environment settings, overridden by whatever was typed into the sidebar."""
     base = load_settings()
-    return replace(
+    typed = replace(
         base,
         typesafe_api_key=_typed(TYPESAFE_KEY) or base.typesafe_api_key,
         typesafe_model=_typed(TYPESAFE_MODEL) or base.typesafe_model,
-        openalex_mailto=_typed(OPENALEX_MAILTO) or base.openalex_mailto,
     )
+    default = BACKEND_CUSTOM if base.custom_endpoint else BACKEND_TYPESAFE
+    if st.session_state.get(BACKEND, default) != BACKEND_CUSTOM:
+        return replace(typed, endpoint_url=None)
+    limit = st.session_state.get(CONTEXT_LIMIT)
+    return replace(
+        typed,
+        # Empty rather than None: Custom was chosen, so a missing URL is an error to
+        # report, not a reason to quietly fall back to TypeSafe.
+        endpoint_url=_typed(ENDPOINT_URL) or base.endpoint_url or "",
+        endpoint_api_key=_typed(ENDPOINT_KEY) or base.endpoint_api_key,
+        endpoint_model=_typed(ENDPOINT_MODEL) or base.endpoint_model,
+        context_limit=int(limit) if limit else base.context_limit,
+    )
+
+
+def restore_endpoint_inputs() -> None:
+    """Before the sidebar renders: bring back endpoint inputs remembered for this session."""
+    remembered = _data().get("endpoint_inputs", {})
+    for key in _REMEMBERED:
+        if key not in st.session_state and key in remembered:
+            st.session_state[key] = remembered[key]
+
+
+def remember_endpoint_inputs() -> None:
+    """After the sidebar renders: keep the endpoint inputs, never the API key.
+
+    Merged rather than replaced: Streamlit forgets a widget's value on any run where it is
+    not drawn, so switching to TypeSafe and back must not wipe the URL.
+    """
+    remembered = _data().setdefault("endpoint_inputs", {})
+    remembered.update({key: st.session_state[key] for key in _REMEMBERED if key in st.session_state})
 
 
 def jev_cache() -> dict:

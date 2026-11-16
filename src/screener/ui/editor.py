@@ -25,7 +25,14 @@ from . import state
 KINDS = ["inclusion", "exclusion", "guard"]
 SECTIONS = [s.value for s in Section]
 LANGUAGES = ["en", "it", "fr", "de", "es", "pt", "nl"]
-WORK_TYPES = ["article", "review", "conference-paper", "book-chapter", "preprint", "dissertation"]
+#: ERIC's publication types that a review is most likely to filter on. Any other ERIC
+#: type can be typed in.
+PUBLICATION_TYPES = [
+    "Journal Articles", "Reports - Research", "Reports - Evaluative", "Reports - Descriptive",
+    "Information Analyses", "Dissertations/Theses - Doctoral Dissertations",
+    "Dissertations/Theses - Masters Theses", "Speeches/Meeting Papers", "Books",
+    "Collected Works - Proceedings", "Guides - Classroom - Teacher", "Opinion Papers",
+]
 
 
 # ------------------------------------------------------------------ pure helpers
@@ -235,12 +242,13 @@ def _basics(draft: dict) -> None:
     )
     draft["query"] = st.text_area(
         "Topical query", draft.get("query", ""), key=_key("query"), height=140,
-        help="OpenAlex full-text search. Quoted phrases, AND / OR / NOT and parentheses "
-             "work; commas do not.",
+        help="Sent to ERIC exactly as written, so it finds what the same query finds on "
+             "eric.ed.gov. Quoted phrases, AND / OR / NOT and parentheses work. To narrow "
+             "it, name fields yourself, e.g. `title:(…)` or `subject:\"Educational Games\"`.",
     )
 
     filters = draft.setdefault("filters", {})
-    st.markdown("**Filters** — applied by OpenAlex and re-checked in code, never asked of Jev")
+    st.markdown("**Filters** — applied in code to the fetched records, never asked of Jev")
     a, b = st.columns(2)
     year_from = a.number_input(
         "From year (0 = no limit)", 0, 2100, int(filters.get("year_from") or 0), key=_key("yf")
@@ -253,12 +261,21 @@ def _basics(draft: dict) -> None:
     filters["languages"] = st.multiselect(
         "Languages", sorted(set(LANGUAGES) | set(filters.get("languages", []))),
         default=filters.get("languages", []), key=_key("lang"),
-        accept_new_options=True, help="ISO 639-1 codes. Empty means any language.",
+        accept_new_options=True,
+        help="ISO 639-1 codes, or an ERIC language name. Empty means any language. Records "
+             "with no language recorded count as English, ERIC's default.",
     )
     filters["types"] = st.multiselect(
-        "Work types", sorted(set(WORK_TYPES) | set(filters.get("types", []))),
+        "Publication types", sorted(set(PUBLICATION_TYPES) | set(filters.get("types", []))),
         default=filters.get("types", []), key=_key("types"),
-        accept_new_options=True, help="OpenAlex work types. Empty means any type.",
+        accept_new_options=True,
+        help="ERIC publication types. A record with any one of them is kept. Empty means "
+             "any type.",
+    )
+    filters["peer_reviewed_only"] = st.checkbox(
+        "Peer-reviewed only", bool(filters.get("peer_reviewed_only")), key=_key("peer"),
+        help="Keep only records ERIC flags as peer reviewed. This drops most reports, "
+             "theses and other grey literature.",
     )
     filters["require_abstract"] = st.checkbox(
         "Drop records with no abstract", bool(filters.get("require_abstract")), key=_key("abs"),

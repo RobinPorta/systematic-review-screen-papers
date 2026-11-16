@@ -1,7 +1,8 @@
 """What a full-text source has to provide.
 
-Only Europe PMC is implemented, and it holds full text for its biomedical open-access
-subset only — so on most corpora a large share of eligible records comes back `NOT_FOUND`.
+Two sources are implemented and tried in order: ERIC's own PDFs, for the records ERIC may
+display, then Europe PMC by DOI, which holds full text for its biomedical open-access
+subset only. Between them a large share of eligible records still comes back `NOT_FOUND`.
 That is not a bug to paper over: "full text not retrievable" is a box on the PRISMA flow
 diagram, and this interface makes it a first-class outcome rather than an exception.
 
@@ -37,8 +38,10 @@ class FullText(BaseModel):
     record_id: str
     doi: str | None = None
     source: str
-    #: Raw markup as fetched, kept so parsing can be re-run without re-fetching.
+    #: Raw markup as fetched, or the text extracted from a PDF, kept so parsing can be
+    #: re-run without re-fetching.
     content: str
+    #: "xml" (JATS, parsed by structure) or "text" (from a PDF, parsed line by line).
     content_type: str = "xml"
 
 
@@ -84,19 +87,38 @@ class FullTextSource(TypingProtocol):
     def check(self, record: Record) -> RetrievalStatus:
         """Can this source supply the paper? Cheap enough to run over a whole shortlist."""
 
-    def fetch(self, record: Record) -> Retrieval:
+    def fetch(self, record: Record, *, use_cache: bool = True) -> Retrieval:
         """Obtain the paper, or explain why not."""
 
 
-def resolve(record: Record, sources: Sequence[FullTextSource]) -> Retrieval:
-    """Try each source in turn; the first success wins.
+#: When every source declines, the most informative refusal is the one reported: being
+#: told "not entitled" is actionable (ask a librarian) in a way that "not found" is not.
+_REFUSAL_PRIORITY = [
+    RetrievalStatus.NOT_ENTITLED,
+    RetrievalStatus.ERROR,
+    RetrievalStatus.NOT_FOUND,
+    RetrievalStatus.NO_IDENTIFIER,
+]
 
-    When every source declines, the most informative refusal is reported: being told
-    "not entitled" is actionable (ask a librarian) in a way that "not found" is not.
-    """
+
+def check(record: Record, sources: Sequence[FullTextSource]) -> RetrievalStatus:
+    """Whether any source can supply the paper, without fetching it."""
+    statuses = []
+    for source in sources:
+        status = source.check(record)
+        if status is RetrievalStatus.OK:
+            return status
+        statuses.append(status)
+    return next((s for s in _REFUSAL_PRIORITY if s in statuses), RetrievalStatus.ERROR)
+
+
+def resolve(
+    record: Record, sources: Sequence[FullTextSource], *, use_cache: bool = True
+) -> Retrieval:
+    """Try each source in turn; the first success wins."""
     attempts: list[Retrieval] = []
     for source in sources:
-        retrieval = source.fetch(record)
+        retrieval = source.fetch(record, use_cache=use_cache)
         if retrieval.ok:
             return retrieval
         attempts.append(retrieval)
@@ -108,13 +130,7 @@ def resolve(record: Record, sources: Sequence[FullTextSource]) -> Retrieval:
             detail="no full-text sources are configured",
         )
 
-    priority = [
-        RetrievalStatus.NOT_ENTITLED,
-        RetrievalStatus.ERROR,
-        RetrievalStatus.NOT_FOUND,
-        RetrievalStatus.NO_IDENTIFIER,
-    ]
-    for status in priority:
+    for status in _REFUSAL_PRIORITY:
         for attempt in attempts:
             if attempt.status is status:
                 return attempt

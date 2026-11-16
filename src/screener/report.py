@@ -172,13 +172,17 @@ def gold_labels(rows: Iterable[Mapping[str, object]]) -> dict[str, str]:
     return labels
 
 
-def format_usage(usage: Usage, *, title: str = "Jev usage") -> str:
-    """The cost line. Worth printing every run — the numbers are the surprise."""
+def format_usage(usage: Usage, *, title: str = "Jev usage", priced: bool = True) -> str:
+    """The cost line. Worth printing every run — the numbers are the surprise.
+
+    `priced=False` is for a self-hosted endpoint, which has no per-token price to quote.
+    """
     per_call = usage.input_tokens / usage.calls if usage.calls else 0
     cached = f", {usage.cached_calls} served from cache" if usage.cached_calls else ""
+    cost = f"${usage.usd:.4f}" if priced else "self-hosted — no per-token price"
     return (
         f"{title}: {usage.calls} calls{cached}, {usage.input_tokens:,} input tokens "
-        f"({per_call:,.0f}/call), ${usage.usd:.4f}"
+        f"({per_call:,.0f}/call), {cost}"
     )
 
 

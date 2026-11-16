@@ -65,7 +65,7 @@ class EuropePMCSource:
     def _lookup(self, record: Record) -> tuple[str | None, str | None]:
         """Find the PMCID for a record, and say why if there is none.
 
-        OpenAlex often carries the PMCID already, which saves a call. Otherwise the record
+        A record that already carries a PMCID saves a call. Otherwise the record
         is looked up by DOI, and the `inEPMC` flag tells us whether the full text is
         actually held here rather than merely indexed.
         """

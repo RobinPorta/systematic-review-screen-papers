@@ -2,12 +2,14 @@
 
 Building the state is a design decision, not plumbing. Jev's jaggedness notes are explicit
 that accuracy falls as the state grows with content unrelated to the decision, so this
-module is deliberately stingy: title, abstract, keywords, journal, publication type. No
-authors, no citation counts, no identifiers — none of which bear on eligibility.
+module is deliberately stingy: title, abstract, descriptors, journal, publication type and
+education level. No authors, no citation, no identifiers — none of which bear on
+eligibility.
 """
 
 from __future__ import annotations
 
+import html
 import json
 import re
 from pathlib import Path
@@ -16,31 +18,38 @@ from typing import Any, Iterable, Iterator
 from pydantic import BaseModel, Field
 
 from .protocol import Filters
-
-_YEAR = re.compile(r"(\d{4})")
+from .query import language_names
 
 
 class Record(BaseModel):
-    """One search result, normalised out of an OpenAlex work."""
+    """One search result, normalised out of an ERIC record."""
 
+    #: ERIC number: `EJ…` for a journal article, `ED…` for any other document.
     id: str
+    #: Taken from ERIC's publisher link when that link is a DOI. Stage 2's route to
+    #: Europe PMC for papers ERIC holds no PDF of.
     doi: str | None = None
     title: str = ""
     abstract: str = ""
+    #: ERIC descriptors: controlled-vocabulary subject terms assigned to every record.
     keywords: list[str] = Field(default_factory=list)
+    #: The journal, or for non-journal documents the organisation that submitted it.
     journal: str = ""
     year: int | None = None
-    cover_date: str | None = None
-    #: OpenAlex work type, e.g. "article", "review", "conference-paper".
-    work_type: str | None = None
-    #: ISO 639-1 code as OpenAlex reports it.
-    language: str | None = None
+    #: ERIC publication types, up to three, e.g. "Journal Articles", "Reports - Research".
+    publication_types: list[str] = Field(default_factory=list)
+    #: Language names as ERIC records them. Empty means English, ERIC's default.
+    languages: list[str] = Field(default_factory=list)
+    #: Every author, "Lastname, Firstname", separated by "; ".
     authors: str = ""
     url: str | None = None
-    #: PubMed Central id, when OpenAlex knows one. Stage 2's route to full text.
+    education_levels: list[str] = Field(default_factory=list)
+    peer_reviewed: bool | None = None
+    #: Volume, issue and pages for an article; conference or thesis details otherwise.
+    citation: str = ""
+    #: ERIC may display the full text, as a PDF at files.eric.ed.gov. Stage 2's first route.
+    eric_fulltext: bool = False
     pmcid: str | None = None
-    pmid: str | None = None
-    is_oa: bool = False
 
     @property
     def has_abstract(self) -> bool:
@@ -58,87 +67,69 @@ class Record(BaseModel):
             state["keywords"] = self.keywords
         if self.journal:
             state["journal"] = self.journal
-        if self.work_type:
-            state["publication_type"] = self.work_type
+        if self.publication_types:
+            state["publication_type"] = self.publication_types
+        if self.education_levels:
+            state["education_level"] = self.education_levels
         return state
 
 
-def parse_year(cover_date: str | None) -> int | None:
-    if not cover_date:
-        return None
-    match = _YEAR.search(cover_date)
-    return int(match.group(1)) if match else None
+#: How many descriptors go into the state. ERIC assigns a dozen or more; the first ones
+#: are the major descriptors, and a long tail adds tokens without adding judgement.
+MAX_KEYWORDS = 12
+
+_ESCAPED_COMMA = re.compile(r"(?<!\\),")
+_DOI = re.compile(r"(?:dx\.)?doi\.org/(10\.\S+)", re.IGNORECASE)
 
 
-def abstract_from_inverted_index(index: dict[str, list[int]] | None) -> str:
-    """Rebuild abstract text from OpenAlex's `{word: [positions]}` form.
+def split_multi(value: str | None) -> list[str]:
+    """Split one of ERIC's multi-valued CSV cells.
 
-    OpenAlex publishes abstracts inverted rather than as running text for copyright
-    reasons. Reversing it recovers the original almost exactly — word order is fully
-    determined by the positions; only the original whitespace and some punctuation
-    spacing are lost, neither of which matters to a screening judgement.
+    Values are joined with commas, and a comma that belongs to a value is written `\\,` —
+    which is how `Poston\\, David I.,Vandenkieboom\\, Kathryn K.` stays two authors.
     """
-    if not index:
-        return ""
-    positions: dict[int, str] = {}
-    for word, indices in index.items():
-        for position in indices:
-            positions[position] = word
-    if not positions:
-        return ""
-    return " ".join(positions[key] for key in sorted(positions))
+    if not value or not value.strip():
+        return []
+    parts = (part.replace("\\,", ",").strip() for part in _ESCAPED_COMMA.split(value))
+    return [part for part in parts if part]
 
 
-def _strip_prefix(value: str | None, prefix: str) -> str | None:
-    """OpenAlex returns identifiers as full URLs; the bare id is what is useful."""
-    if not value:
-        return None
-    return value.rsplit("/", 1)[-1] if value.startswith(prefix) else value
+def eric_url(eric_id: str) -> str:
+    return f"https://eric.ed.gov/?id={eric_id}"
 
 
-def from_openalex_work(work: dict[str, Any]) -> Record:
-    """Normalise one OpenAlex work.
+def from_eric_row(row: dict[str, str]) -> Record:
+    """Normalise one row of ERIC's CSV.
 
-    Written defensively throughout: OpenAlex omits or nulls fields freely, and a record
-    missing its venue or its authors is still perfectly screenable.
+    Written defensively: ERIC leaves cells empty freely, and a record missing its source
+    or its authors is still perfectly screenable.
     """
-    identifiers = work.get("ids") or {}
-    primary = work.get("primary_location") or {}
-    source = primary.get("source") or {}
-    open_access = work.get("open_access") or {}
+    def cell(name: str) -> str:
+        # ERIC HTML-escapes its text: "Dungeons &amp; Dragons".
+        return html.unescape(row.get(name) or "").strip()
 
-    doi = work.get("doi")
-    if isinstance(doi, str) and doi.startswith("https://doi.org/"):
-        doi = doi[len("https://doi.org/"):]
-
-    authorships = work.get("authorships") or []
-    first_author = ""
-    if authorships:
-        first_author = ((authorships[0] or {}).get("author") or {}).get("display_name") or ""
-
-    date = work.get("publication_date")
-    openalex_id = _strip_prefix(identifiers.get("openalex") or work.get("id"), "https://") or ""
+    eric_id = cell("id") or "unknown"
+    link = cell("url")
+    doi = _DOI.search(link)
+    year = cell("publicationdateyear")
+    reviewed = cell("peerreviewed").upper()
 
     return Record(
-        id=openalex_id or doi or "unknown",
-        doi=doi or None,
-        title=(work.get("display_name") or work.get("title") or "").strip(),
-        abstract=abstract_from_inverted_index(work.get("abstract_inverted_index")),
-        keywords=[
-            k.get("display_name", "")
-            for k in (work.get("keywords") or [])
-            if k.get("display_name")
-        ][:8],
-        journal=source.get("display_name") or "",
-        year=work.get("publication_year") or parse_year(date),
-        cover_date=date,
-        work_type=work.get("type"),
-        language=work.get("language"),
-        authors=first_author,
-        url=primary.get("landing_page_url") or identifiers.get("openalex"),
-        pmcid=_strip_prefix(identifiers.get("pmcid"), "https://"),
-        pmid=_strip_prefix(identifiers.get("pmid"), "https://"),
-        is_oa=bool(open_access.get("is_oa")),
+        id=eric_id,
+        doi=doi.group(1).rstrip(".") if doi else None,
+        title=cell("title"),
+        abstract=cell("description"),
+        keywords=split_multi(cell("subject"))[:MAX_KEYWORDS],
+        journal=cell("source"),
+        year=int(year) if year.isdigit() else None,
+        publication_types=split_multi(cell("publicationtype")),
+        languages=split_multi(cell("language")),
+        authors="; ".join(split_multi(cell("author"))),
+        url=link or eric_url(eric_id),
+        education_levels=split_multi(cell("educationlevel")),
+        peer_reviewed={"T": True, "F": False}.get(reviewed),
+        citation=cell("sourceid"),
+        eric_fulltext=cell("e_fulltextauth") == "1",
     )
 
 
@@ -157,22 +148,22 @@ class FilterOutcome(BaseModel):
 
 
 def apply_filters(records: Iterable[Record], filters: Filters) -> FilterOutcome:
-    """Re-check year, language and work type locally.
+    """Apply the protocol's year, language, publication type and peer-review filters.
 
-    The OpenAlex query already filtered on all three, so this is a belt-and-braces pass
-    that catches a malformed filter string before it quietly changes a review's corpus.
-    Every field checked here comes back on the work itself, so unlike a Scopus
-    `LANGUAGE()` clause these really are verifiable rather than taken on trust.
+    The query goes to ERIC exactly as written, so this is where the filters take effect.
+    Every field checked here comes back on the record itself, and each dropped record is
+    reported with its reason.
 
-    A record with no abstract is deliberately **not** dropped here. Absence of an abstract
-    is not evidence of ineligibility; such records fail the `abstract_informative` guard
-    during screening and land in `maybe` for a human, which is what PRISMA expects.
+    A record with no abstract is dropped only when the protocol asks for that. Absence of
+    an abstract is not evidence of ineligibility; left in, such records fail the
+    `abstract_informative` guard during screening and land in `maybe` for a human, which
+    is what PRISMA expects.
     """
     kept: list[Record] = []
     dropped: list[tuple[str, str]] = []
 
     allowed_types = {value.strip().lower() for value in filters.types if value.strip()}
-    allowed_languages = {value.strip().lower() for value in filters.languages if value.strip()}
+    allowed_languages = {name.lower() for name in language_names(filters.languages)}
 
     for record in records:
         if filters.year_from is not None and (record.year is None or record.year < filters.year_from):
@@ -181,13 +172,21 @@ def apply_filters(records: Iterable[Record], filters: Filters) -> FilterOutcome:
         if filters.year_to is not None and (record.year is None or record.year > filters.year_to):
             dropped.append((record.id, f"published after {filters.year_to}"))
             continue
-        if allowed_types and (record.work_type or "").lower() not in allowed_types:
-            dropped.append((record.id, f"work type {record.work_type or 'unknown'}"))
+        types = {value.lower() for value in record.publication_types}
+        if allowed_types and not types & allowed_types:
+            dropped.append((record.id, "publication type not among those the protocol keeps"))
             continue
-        # A work with no language recorded is kept: OpenAlex leaves the field null often
-        # enough that dropping on it would lose eligible studies for a metadata gap.
-        if allowed_languages and record.language and record.language.lower() not in allowed_languages:
-            dropped.append((record.id, f"language {record.language}"))
+        # A record with no language is kept: ERIC's default is English, and dropping on a
+        # metadata gap would lose eligible studies.
+        languages = {value.lower() for value in record.languages}
+        if allowed_languages and languages and not languages & allowed_languages:
+            dropped.append((record.id, f"language {', '.join(record.languages)}"))
+            continue
+        if filters.peer_reviewed_only and record.peer_reviewed is not True:
+            dropped.append((record.id, "not peer reviewed"))
+            continue
+        if filters.require_abstract and not record.has_abstract:
+            dropped.append((record.id, "no abstract"))
             continue
         kept.append(record)
 
@@ -195,15 +194,17 @@ def apply_filters(records: Iterable[Record], filters: Filters) -> FilterOutcome:
 
 
 def dedupe(records: Iterable[Record]) -> list[Record]:
-    """Drop repeats by DOI, then by normalised title."""
+    """Drop repeats by ERIC number, then by DOI, then by normalised title."""
+    seen_id: set[str] = set()
     seen_doi: set[str] = set()
     seen_title: set[str] = set()
     unique: list[Record] = []
     for record in records:
         doi = (record.doi or "").lower().strip()
         title = re.sub(r"\W+", " ", record.title.lower()).strip()
-        if doi and doi in seen_doi:
+        if record.id in seen_id or (doi and doi in seen_doi):
             continue
+        seen_id.add(record.id)
         if not doi and title and title in seen_title:
             continue
         if doi:

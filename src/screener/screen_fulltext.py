@@ -21,11 +21,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 from pydantic import BaseModel, Field
-from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy, TypeSafeError
+from typesafe_sdk import AsyncTypeSafeClient, TypeSafeError
 
 from .answers import AnswerValue, ChoiceValue, NoulValue, ScoreValue, from_json, normalise, to_json
-from .config import CACHE_DIR, Settings
+from .config import CACHE_DIR, JEV_STATE_BUDGET, Settings
 from .decide import Decision, Label, decide
+from .endpoint import open_client
 from .fulltext.base import RetrievalStatus
 from .fulltext.sections import ParsedSections
 from .protocol import DEFAULT_SECTIONS, Protocol, Section
@@ -42,10 +43,10 @@ from .screen import USD_PER_MTOK, Usage, estimate_tokens, questions_fingerprint
 
 log = logging.getLogger(__name__)
 
-#: Jev allows 32k tokens for state plus the longest question. Stop well short: the token
-#: estimate here is a four-characters-per-token approximation, not a real tokeniser, and a
-#: 400 halfway through a screening run is a bad way to find out it was optimistic.
-MAX_STATE_TOKENS = 22_000
+#: The default state budget: Jev's, with headroom (see `config.JEV_STATE_BUDGET`). A
+#: self-hosted endpoint uses `Settings.state_budget` instead, derived from its own limit —
+#: a 400 halfway through a run, or silent truncation, is a bad way to find out it was wrong.
+MAX_STATE_TOKENS = JEV_STATE_BUDGET
 DEFAULT_CONCURRENCY = 4
 
 
@@ -377,20 +378,17 @@ async def screen_fulltexts(
     if not items:
         return run
 
-    api_key = settings.require_typesafe()
     bundles = _stage2_questions(protocol)
+    budget = settings.state_budget
     fingerprint = questions_fingerprint(
-        {f"{b.key}:{qid}": q for b in bundles for qid, q in b.questions.items()}
+        {f"{b.key}:{qid}": q for b in bundles for qid, q in b.questions.items()},
+        salt=settings.cache_salt,
     )
     cache_root = (cache_dir if cache_dir is not None else CACHE_DIR / "jev") / "fulltext" / fingerprint
     semaphore = asyncio.Semaphore(max(1, concurrency))
     done = 0
 
-    async with AsyncTypeSafeClient(
-        api_key=api_key,
-        model=settings.typesafe_model,
-        retry=RetryPolicy(max_retries=4),
-    ) as client:
+    async with open_client(settings) as client:
 
         async def one(record: Record, parsed: ParsedSections, status: RetrievalStatus) -> FullTextResult:
             nonlocal done
@@ -433,7 +431,7 @@ async def screen_fulltexts(
                 sections_read: dict[str, list[str]] = {}
 
                 for bundle in bundles:
-                    for part in build_parts(bundle, parsed):
+                    for part in build_parts(bundle, parsed, budget=budget):
                         async with semaphore:
                             try:
                                 response = await client.system_one(
@@ -499,9 +497,9 @@ async def screen_fulltexts(
 
 
 def estimate_fulltext_cost(
-    protocol: Protocol, parsed_papers: Iterable[ParsedSections]
+    protocol: Protocol, parsed_papers: Iterable[ParsedSections], *, budget: int = MAX_STATE_TOKENS
 ) -> tuple[int, float]:
-    """Preview tokens and dollars for a stage-2 run."""
+    """Preview tokens and dollars for a stage-2 run. Dollars are Jev's price."""
     bundles = _stage2_questions(protocol)
     question_tokens = sum(
         estimate_tokens(json.dumps(
@@ -512,6 +510,6 @@ def estimate_fulltext_cost(
     total = 0
     for parsed in parsed_papers:
         for bundle in bundles:
-            total += sum(part.tokens for part in build_parts(bundle, parsed))
+            total += sum(part.tokens for part in build_parts(bundle, parsed, budget=budget))
         total += question_tokens
     return total, total / 1_000_000 * USD_PER_MTOK

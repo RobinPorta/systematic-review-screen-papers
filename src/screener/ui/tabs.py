@@ -7,13 +7,15 @@ compares their numbers.
 
 from __future__ import annotations
 
+import json
+
 import altair as alt
 import pandas as pd
 import streamlit as st
 
 from .. import report
 from ..answers import ChoiceValue, NoulValue, ScoreValue
-from ..config import MissingCredential
+from ..config import SetupError
 from ..decide import Label
 from ..evaluate import evaluate
 from ..pipeline import (
@@ -26,10 +28,9 @@ from ..pipeline import (
     shortlist,
 )
 from ..prisma import build_flow
-from ..query import build_filter, filter_for
 from ..sampling import stratified_sample
-from ..screen import estimate_cost
-from ..openalex import OpenAlexError
+from ..screen import estimate_cost, estimate_tokens
+from ..eric import EricError
 from ..tune import sweep
 from . import state
 
@@ -49,6 +50,13 @@ def _progress(container, noun: str):
             bar.progress(min(done / total, 1.0), text=f"{noun}: {done}/{total}")
 
     return callback
+
+
+def _usage_line(usage, *, stage: str | None = None) -> str:
+    """The cost line for whichever backend is configured now."""
+    settings = state.settings()
+    title = f"{settings.backend_label} usage" + (f" ({stage})" if stage else "")
+    return report.format_usage(usage, title=title, priced=not settings.custom_endpoint)
 
 
 def _download_csv(kind: str, what: str) -> None:
@@ -72,16 +80,18 @@ def _counts_row(counts: dict[str, int]) -> None:
 def search_tab() -> None:
     st.header("1 · Search")
     st.caption(
-        "Year, language and work type are applied in the OpenAlex filter and re-checked "
-        "in code — never asked of Jev, which is documented as unreliable at comparing dates."
+        "Year, language and publication type are checked in code on the fetched records — "
+        "never asked of Jev, which is documented as unreliable at comparing dates."
     )
 
     spec = state.protocol()
 
     spec.query = st.text_area(
         "Topical query", spec.query, height=160,
-        help="Quoted phrases, AND / OR / NOT and parentheses all work. Commas do not — "
-             "OpenAlex reads a comma as a filter separator.",
+        help="Sent to ERIC exactly as written, so it finds what the same query finds on "
+             "eric.ed.gov: title, abstract, descriptors, source and author. Quoted phrases, "
+             "AND / OR / NOT and parentheses all work. To narrow it, name fields yourself, "
+             "e.g. `title:(…)` or `subject:\"Educational Games\"`.",
     )
 
     left, middle, right = st.columns([1, 1, 2])
@@ -96,21 +106,14 @@ def search_tab() -> None:
         "Languages",
         ["en", "it", "fr", "de", "es", "pt", "nl"],
         default=spec.filters.languages or ["en"],
-        help="ISO 639-1 codes, as OpenAlex reports them.",
+        help="Records with no language recorded count as English, ERIC's default.",
     )
 
-    assembled = build_filter(spec.query, spec.filters)
-    st.text_area("Assembled OpenAlex filter", assembled, height=110, disabled=True)
-    if spec.filters.year_from:
-        st.caption(
-            f"`from_publication_date:{spec.filters.year_from}-01-01` — OpenAlex date bounds "
-            "are inclusive, so there is no off-by-one to get wrong here."
-        )
-    if spec.filters.languages:
-        st.caption(
-            "OpenAlex returns a `language` field on every work, so unlike a Scopus "
-            "LANGUAGE() clause this filter is re-checked in code after fetching."
-        )
+    st.caption(
+        "The query goes to ERIC exactly as written, so the count matches eric.ed.gov. Years, "
+        "languages and the protocol's other filters are applied after fetching, and the "
+        "records they remove are listed. Year bounds are inclusive."
+    )
 
     if state.is_editable():
         if st.button("Save query and filters to the protocol"):
@@ -128,11 +131,11 @@ def search_tab() -> None:
     if count_button.button("How many results?", use_container_width=True):
         try:
             state.run().result_count = count_results(spec, settings=state.settings())
-        except (OpenAlexError, MissingCredential) as error:
+        except (EricError, SetupError) as error:
             st.error(str(error))
 
     if state.run().result_count is not None:
-        st.info(f"{state.run().result_count:,} works match this query.")
+        st.info(f"{state.run().result_count:,} records match this query.")
 
     if fetch_button.button("Fetch records", type="primary", use_container_width=True):
         container = st.empty()
@@ -143,7 +146,7 @@ def search_tab() -> None:
                 limit=int(limit),
                 on_page=_progress(container, "fetched"),
             )
-        except (OpenAlexError, MissingCredential) as error:
+        except (EricError, SetupError) as error:
             container.empty()
             st.error(str(error))
             return
@@ -160,8 +163,6 @@ def search_tab() -> None:
                 f"{outcome.without_abstract} kept with no abstract — they will fail the "
                 "informative guard and go to a human rather than being dropped."
             )
-        if outcome.credits_remaining is not None:
-            st.caption(f"OpenAlex credits remaining: {outcome.credits_remaining:,}")
 
     records = state.records()
     if records:
@@ -169,8 +170,10 @@ def search_tab() -> None:
         st.dataframe(
             pd.DataFrame(
                 [
-                    {"year": r.year, "title": r.title, "journal": r.journal,
-                     "abstract": "yes" if r.has_abstract else "MISSING"}
+                    {"id": r.id, "year": r.year, "title": r.title, "source": r.journal,
+                     "type": ", ".join(r.publication_types),
+                     "abstract": "yes" if r.has_abstract else "MISSING",
+                     "ERIC PDF": "yes" if r.eric_fulltext else "—"}
                     for r in records[:200]
                 ]
             ),
@@ -208,7 +211,21 @@ def screen_tab() -> None:
 
     batch = records[: int(limit)]
     tokens, usd = estimate_cost(spec, batch)
-    st.info(f"{len(batch)} records · ~{tokens:,} input tokens · ~${usd:.4f}")
+    settings = state.settings()
+    if settings.custom_endpoint:
+        st.info(f"{len(batch)} records · ~{tokens:,} input tokens · self-hosted, no per-token price")
+        too_long = sum(
+            estimate_tokens(json.dumps(r.state(), default=str)) > settings.context_limit
+            for r in batch
+        )
+        if too_long:
+            st.warning(
+                f"{too_long} record(s) look longer than the endpoint's context limit "
+                f"({settings.context_limit:,} tokens), so the server will truncate them. "
+                "Raise the limit if your server allows longer states."
+            )
+    else:
+        st.info(f"{len(batch)} records · ~{tokens:,} input tokens · ~${usd:.4f}")
 
     if st.button("Run stage 1", type="primary"):
         container = st.empty()
@@ -217,7 +234,7 @@ def screen_tab() -> None:
                 spec, batch, settings=state.settings(), **state.jev_cache(),
                 concurrency=int(concurrency), on_progress=_progress(container, "screened"),
             )
-        except MissingCredential as error:
+        except SetupError as error:
             container.empty()
             st.error(str(error))
             return
@@ -229,7 +246,7 @@ def screen_tab() -> None:
     if run and run.results:
         st.subheader("Result")
         _counts_row(run.counts())
-        st.caption(report.format_usage(run.usage))
+        st.caption(_usage_line(run.usage))
         _download_csv("screened", "screening results")
         failures = [r for r in run.results if r.error]
         if failures:
@@ -360,8 +377,10 @@ def review_tab() -> None:
 def fulltext_tab() -> None:
     st.header("4 · Full text")
     st.caption(
-        "Each criterion is routed to the sections that bear on it, so a paper is never sent "
-        "whole — Jev's accuracy falls as the state fills with text unrelated to the decision."
+        "Full texts come from ERIC's own PDFs where it may display them, then from Europe "
+        "PMC by DOI. Each criterion is routed to the sections that bear on it, so a paper is "
+        "never sent whole — accuracy falls as the state fills with text unrelated to the "
+        "decision."
     )
 
     spec = state.protocol()
@@ -380,7 +399,7 @@ def fulltext_tab() -> None:
             coverage, _ = check_coverage(
                 candidates, settings=state.settings(), on_progress=_progress(container, "checked")
             )
-        except MissingCredential as error:
+        except SetupError as error:
             container.empty()
             st.error(str(error))
             return
@@ -397,10 +416,10 @@ def fulltext_tab() -> None:
         st.json(coverage.by_status, expanded=False)
         if coverage.percentage < 50:
             st.warning(
-                "Europe PMC holds full text for its biomedical open-access subset only, so a "
-                "low number here is expected rather than a fault for any topic outside the "
-                "life sciences. Everything it cannot supply is reported as PRISMA's "
-                "'reports not retrieved'."
+                "ERIC may display the full text of only some of its records, and Europe PMC "
+                "holds its biomedical open-access subset only, so a low number here is "
+                "expected rather than a fault. Everything they cannot supply is reported as "
+                "PRISMA's 'reports not retrieved'."
             )
 
     limit = right.number_input("Assess at most", 1, max(len(candidates), 1), min(len(candidates), 50))
@@ -416,7 +435,7 @@ def fulltext_tab() -> None:
                 spec, items, settings=state.settings(), **state.jev_cache(),
                 on_progress=_progress(container, "assessed"),
             )
-        except MissingCredential as error:
+        except SetupError as error:
             container.empty()
             st.error(str(error))
             return
@@ -430,7 +449,7 @@ def fulltext_tab() -> None:
 
     st.subheader("Result")
     _counts_row(run.counts())
-    st.caption(report.format_usage(run.usage, title="Jev usage (stage 2)"))
+    st.caption(_usage_line(run.usage, stage="stage 2"))
     _download_csv("fulltext", "full-text results")
 
     reasons = run.exclusion_reasons()
@@ -493,7 +512,8 @@ def label_tab() -> None:
         st.info(f"No {stage} results yet.")
         return
 
-    size = st.number_input("Sample size", 5, min(len(run.results), 500), min(len(run.results), 50))
+    most = min(len(run.results), 500)
+    size = st.number_input("Sample size", min(5, most), most, min(most, 50))
     if st.button("Draw sample"):
         picked = stratified_sample(
             [(r.record.id, r.decision.label, r.decision.rank) for r in run.results],

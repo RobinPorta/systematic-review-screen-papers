@@ -128,18 +128,22 @@ class ScoreSpec(BaseModel):
 
 
 class Filters(BaseModel):
-    """Filters applied in the OpenAlex query and re-checked in code — never asked of Jev.
+    """Filters applied in code to the records ERIC returns — never asked of Jev.
 
     Jev's documented weak spots include counting and date comparison, so years, languages
-    and work types are handled by the search index and by ordinary Python.
+    and publication types are handled by ordinary Python on the fields ERIC returns.
     """
 
     year_from: int | None = None
     year_to: int | None = None
     #: ISO 639-1 codes, e.g. ["en", "it"].
     languages: list[str] = Field(default_factory=list)
-    #: OpenAlex work types to keep, e.g. article, review, conference-paper, book-chapter.
+    #: ERIC publication types to keep, e.g. "Journal Articles", "Reports - Research",
+    #: "Dissertations/Theses - Doctoral Dissertations". A record carrying any one of them
+    #: is kept. Empty means any type.
     types: list[str] = Field(default_factory=list)
+    #: Keep only records ERIC flags as peer reviewed.
+    peer_reviewed_only: bool = False
     #: Drop records with no abstract at the source.
     #:
     #: Off by default, and that default is a methodological position rather than a
@@ -187,7 +191,7 @@ class Protocol(BaseModel):
 
     name: str
     description: str = ""
-    #: The topical part of the search. Filters are appended by `query.build_filter`.
+    #: The search, sent to ERIC exactly as written. Filters are applied after fetching.
     query: str
     filters: Filters = Field(default_factory=Filters)
     thresholds: Thresholds = Field(default_factory=Thresholds)

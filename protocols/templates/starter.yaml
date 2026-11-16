@@ -8,8 +8,7 @@ filters:
   languages:
   - en
   types:
-  - article
-  - review
+  - Journal Articles
   require_abstract: false
 thresholds:
   include_min: 0.6
